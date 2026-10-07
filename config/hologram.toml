@@ -1,0 +1,49 @@
+# Hologram VR Cam configuration. Every value below is the built-in default;
+# change what you need and run:  python -m hologram run --config config/hologram.toml
+
+[pins]                      # BCM GPIO numbers - must match docs/wiring.md
+capture_button = 17         # to GND, internal pull-up
+touch = 27                  # TTP223 OUT (active high)
+privacy_led = 22            # 2N7002 gate
+low_battery = 23            # PowerBoost LBO via Schottky (active low)
+imu_interrupt = 4
+
+[capture]
+media_dir = "~/DCIM/Hologram"
+video_size = [1920, 1080]
+framerate = 30
+bitrate = 10000000
+max_clip_seconds = 60.0     # Ray-Ban style cap; up to 180 keeps heat in check
+record_audio = true         # INMP441 over I2S, muxed in as AAC when the clip ends
+audio_device = "plughw:CARD=sndrpigooglevoi"   # ALSA name of the I2S card; list with: arecord -L
+min_free_mb = 500
+
+[display]
+enabled = true
+size = [1920, 1080]         # side-by-side frame sent to the driver board
+render_scale = 0.5          # 0.5 = render 960x540 and scale up (Pi Zero 2 W friendly)
+fps = 30
+eye_fov_deg = 45.0
+k1 = 0.0                    # lens pre-distortion; birdbath optics need ~0,
+k2 = 0.0                    # fresnel/aspheric VR lenses roughly k1 = 0.22, k2 = 0.24
+lens_center_shift = 0.0
+passthrough_zoom = 1.0
+start_mode = "panorama"     # panorama | passthrough | off
+panorama = ""               # path to a 2:1 equirectangular photo; empty = built-in grid world
+
+[tracking]
+enabled = true
+i2c_bus = 1
+address = 0x68
+rate_hz = 200.0
+beta = 0.05
+calibration_samples = 200
+axis_map = ["x", "y", "z"]  # if the IMU board is rotated, e.g. ["-y", "x", "z"]
+
+[thermal]
+sensor_path = "/sys/class/thermal/thermal_zone0/temp"
+stop_recording_c = 80.0
+resume_c = 70.0
+
+[power]
+shutdown_on_low_battery = true
