@@ -15,7 +15,7 @@ Part numbers are examples; any equivalent with the same size and interface works
 | 7 | 2 | Visor mirrors (ellipsoidal reflectors) | cad/out/vr/stl/mirror_*.stl | Visor mirror, ellipsoidal (left eye), Visor mirror, ellipsoidal (right eye) | Resin print, sand to 2000 grit, clear coat, then first-surface mirror finish (see the build guide). |
 | 8 | 1 | MPU-6050 IMU (GY-521) | I2C 0x68 | MPU-6050 IMU (head tracking) | On the optics bridge, rigid with the panels. |
 | 9 | 1 | Raspberry Pi Camera Module 3 Wide | + 500 mm Pi 5 camera cable | Camera Module 3 Wide (passthrough) | Above the visor, through a 9 mm hole: passthrough view of the room. |
-| 10 | 2 | MAX98357A I2S amp | 3 W class D | MAX98357A amp (left), MAX98357A amp (right) | Left amp SD to VIN (left channel), right amp SD via 220 k (right). |
+| 10 | 2 | MAX98357A I2S amp | 3 W class D (Adafruit-style board, 1 M SD pull-up) | MAX98357A amp (left), MAX98357A amp (right) | Channel select: left amp SD straight to VIN; right amp SD to VIN through 470 k (0.8-1.4 V on SD). |
 | 11 | 2 | 40 mm helmet speaker drivers | 8 ohm, low profile (~10 mm) | 40 mm speaker driver (left ear), 40 mm speaker driver (right ear) | In the ear cups. |
 | 12 | 4 | Tactile buttons | 6 x 6 mm, long stem | Buttons: mode, action, volume -, volume + | Mode, action, volume down, volume up. |
 | 13 | 1 | Load switch module | e.g. TPS22918 / P-MOSFET, 5 V 2 A | Display power load switch | Cuts the display board in sleep. |

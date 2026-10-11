@@ -5,6 +5,7 @@
     python -m hologram.vr snapshot [--mode panorama|gallery|passthrough] [--yaw DEG] [--pitch DEG] [--out FILE]
     python -m hologram.vr imu-check
     python -m hologram.vr optics [--config FILE]
+    python -m hologram.vr eye-view [--yaw DEG] [--out FILE]
 """
 from __future__ import annotations
 
@@ -17,13 +18,15 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
+
 from .. import __version__
 from .. import quaternion as qt
 from ..imageio import write_png
 from .app import Mode, VrApp, system_poweroff
 from .config import load_config
 from .hardware import build_mock, build_pi
-from .optics import ReflectorOptics, field_of_view
+from .optics import ReflectorOptics, eye_view, field_of_view
 
 
 def cmd_run(args: argparse.Namespace) -> int:
@@ -33,15 +36,16 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _mock_app(args: argparse.Namespace, mode: str = "panorama", clock=None) -> VrApp:
+def _mock_app(args: argparse.Namespace, mode: str = "panorama", clock=None, scale: float = 0.25) -> VrApp:
     cfg = load_config(args.config)
-    cfg = replace(cfg, display=replace(cfg.display, start_mode=mode, render_scale=0.25))
+    cfg = replace(cfg, display=replace(cfg.display, start_mode=mode, render_scale=scale))
     return VrApp(cfg, build_mock(cfg), **({"clock": clock} if clock else {}))
 
 
 def cmd_demo(args: argparse.Namespace) -> int:
     """Headless walk-through: render each mode, show render-skipping and sleep."""
     out = Path(args.out or tempfile.mkdtemp(prefix="hologram-vr-demo-"))
+    out.mkdir(parents=True, exist_ok=True)
     clock = [0.0]
     app = _mock_app(args, clock=lambda: clock[0])
 
@@ -80,8 +84,24 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
     if frame is None:
         print("nothing to render", file=sys.stderr)
         return 1
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     write_png(args.out, frame)
     print(f"wrote {args.out} ({frame.shape[1]}x{frame.shape[0]}, mode={args.mode})")
+    return 0
+
+
+def cmd_eye_view(args: argparse.Namespace) -> int:
+    """Simulate what each eye sees through the optics (pre-warped panel -> mirror -> eye)."""
+    app = _mock_app(args, "panorama", scale=0.6)
+    app.tracker.set_orientation(qt.yaw_quat(math.radians(args.yaw)))
+    frame = app.render()
+    left_t, right_t = app.tables()
+    w = left_t.shape[1]
+    eyes = [eye_view(frame[:, :w], left_t, args.size, args.fov), eye_view(frame[:, w:], right_t, args.size, args.fov)]
+    gap = np.full((args.size, 8, frame.shape[2]), 255, np.uint8)
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+    write_png(args.out, np.concatenate([eyes[0], gap, eyes[1]], axis=1))
+    print(f"wrote {args.out}: left and right eye, {args.fov:.0f} deg across each")
     return 0
 
 
@@ -162,6 +182,14 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("optics", help="print the field of view of the configured optics")
     p.add_argument("--config")
     p.set_defaults(func=cmd_optics)
+
+    p = sub.add_parser("eye-view", help="simulate what each eye sees through the optics")
+    p.add_argument("--config")
+    p.add_argument("--yaw", type=float, default=0.0)
+    p.add_argument("--size", type=int, default=480)
+    p.add_argument("--fov", type=float, default=140.0)
+    p.add_argument("--out", default="hologram_eye_view.png")
+    p.set_defaults(func=cmd_eye_view)
 
     p = sub.add_parser("imu-check", help="print live orientation from the IMU")
     p.add_argument("--config")

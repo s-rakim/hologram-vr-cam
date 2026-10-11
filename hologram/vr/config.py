@@ -37,6 +37,11 @@ class DisplayConfig:
     sleep_after_still_s: float = 60.0      # displays off when the helmet is put down
     wake_threshold_deg: float = 2.0
 
+    def eye_size(self) -> tuple[int, int]:
+        """Rendered pixels per eye (the GPU scales the frame up to the panels)."""
+        w, h = self.size
+        return max(8, int(w / 2 * self.render_scale)), max(8, int(h * self.render_scale))
+
 
 @dataclass(frozen=True)
 class TrackingConfig:

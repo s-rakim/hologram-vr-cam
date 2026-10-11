@@ -202,7 +202,7 @@ def test_still_view_is_not_rerendered_and_sleep_saves_power(tmp_path):
     app, _, powered, _ = make_app(tmp_path, clock)
     frame = app.render()
     w, h = app.eye_size()
-    assert frame.shape == (h, 2 * w, 3)
+    assert frame.shape == (h, 2 * w, 4)
     assert app.render() is None                                       # nothing moved
     app.tracker.set_orientation(qt.yaw_quat(math.radians(5)))
     assert app.render() is not None

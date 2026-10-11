@@ -1,11 +1,19 @@
-"""Stereo renderer for the headset's displays.
+"""Stereo renderer for the helmet's displays.
 
-The display shows one side-by-side frame: the left half goes to the left
+The displays show one side-by-side frame: the left half goes to the left
 eye's panel and the right half to the right eye's. Everything here works on
-per-eye *ray tables* (see ``optics.py``) computed once at start-up: for each
-output pixel, the direction the eye sees it in. Per frame we only rotate
-those rays by the head orientation and look up colours, which keeps the
-Pi 5 busy with a few vector operations per frame whatever the optics.
+a *ray table* for the whole frame (see ``optics.py``), computed once at
+start-up: for each output pixel, the direction the eye sees it in. Per frame
+we only rotate those rays by the head orientation and look up colours.
+
+Speed matters on a Pi 5, so the hot path is laid out for numpy:
+
+* rays are stored as three contiguous rows (x, y, z), so every step is a
+  straight vector operation with no strided access;
+* images are packed as one ``uint32`` per pixel (R, G, B, X bytes), so a
+  pixel lookup is a single gather instead of three;
+* frames come out as ``(H, W, 4)`` RGBX ``uint8``, which pygame can show
+  without copying (``pygame.image.frombuffer(..., "RGBX")``).
 """
 from __future__ import annotations
 
@@ -16,10 +24,13 @@ import numpy as np
 
 from .optics import RayTable
 
+Frame = np.ndarray   # (H, W, 4) uint8, RGBX
+
 
 def grid_world(width: int = 2048, height: int = 1024) -> np.ndarray:
     """Built-in equirectangular test scene: sky, ground, 15 degree grid and
-    coloured compass posts so head tracking is easy to judge."""
+    coloured compass posts (red ahead, green right, yellow behind, blue left)
+    so head tracking and the optics calibration are easy to judge."""
     lon = (np.arange(width, dtype=np.float32) + 0.5) / width * 360.0 - 180.0
     lat = 90.0 - (np.arange(height, dtype=np.float32) + 0.5) / height * 180.0
     LON, LAT = np.meshgrid(lon, lat)
@@ -36,52 +47,75 @@ def grid_world(width: int = 2048, height: int = 1024) -> np.ndarray:
     return np.clip(img, 0, 255).astype(np.uint8)
 
 
-class _Eyes:
-    """Flattened ray tables for both eyes."""
+def pack(rgb: np.ndarray) -> np.ndarray:
+    """(H, W, 3 or 4) uint8 -> (H, W) uint32, one RGBX pixel per element."""
+    if rgb.ndim != 3 or rgb.shape[2] not in (3, 4) or rgb.dtype != np.uint8:
+        raise ValueError("expected an (H, W, 3) or (H, W, 4) uint8 image")
+    if rgb.shape[2] == 3:
+        rgbx = np.empty(rgb.shape[:2] + (4,), np.uint8)
+        rgbx[..., :3] = rgb
+        rgbx[..., 3] = 0
+        rgb = rgbx
+    return np.ascontiguousarray(rgb).view(np.uint32)[..., 0]
+
+
+def unpack(packed: np.ndarray) -> Frame:
+    """(H, W) uint32 -> (H, W, 4) uint8 RGBX (a view, no copy)."""
+    return np.ascontiguousarray(packed).view(np.uint8).reshape(packed.shape + (4,))
+
+
+class _Frame:
+    """The ray tables of both eyes laid out as one side-by-side frame."""
 
     def __init__(self, tables: Sequence[RayTable]) -> None:
         if len(tables) != 2 or tables[0].shape != tables[1].shape:
             raise ValueError("need two ray tables of the same size")
         self.eye_h, self.eye_w = tables[0].shape
-        self._rays = [np.ascontiguousarray(t.rays.reshape(-1, 3), np.float32) for t in tables]
-        self._dark = [~t.valid.ravel() for t in tables]
-        self._same = (np.array_equal(self._rays[0], self._rays[1])
-                      and np.array_equal(self._dark[0], self._dark[1]))
+        rays = np.concatenate([t.rays for t in tables], axis=1)            # (h, 2w, 3)
+        self._rays = np.ascontiguousarray(rays.reshape(-1, 3).T, np.float32)   # (3, N)
+        self._dark = ~np.concatenate([t.valid for t in tables], axis=1).ravel()
 
-    def side_by_side(self, eyes: list[np.ndarray]) -> np.ndarray:
-        out = []
-        for colours, dark in zip(eyes, self._dark):
-            colours[dark] = 0
-            out.append(colours.reshape(self.eye_h, self.eye_w, 3))
-        return np.concatenate(out, axis=1)
+    @property
+    def size(self) -> tuple[int, int]:
+        return 2 * self.eye_w, self.eye_h
+
+    def _finish(self, pixels: np.ndarray) -> Frame:
+        pixels[self._dark] = 0
+        return unpack(pixels.reshape(self.eye_h, 2 * self.eye_w))
 
 
-class PanoramaRenderer(_Eyes):
+class PanoramaRenderer(_Frame):
     """Head-tracked view into a 360 degree equirectangular image (mono)."""
 
     def __init__(self, pano: np.ndarray, tables: Sequence[RayTable]) -> None:
         super().__init__(tables)
-        if pano.ndim != 3 or pano.shape[2] != 3:
+        if pano.ndim != 3 or pano.shape[2] not in (3, 4):
             raise ValueError("panorama must be (H, W, 3)")
-        self.pano = np.ascontiguousarray(pano)
+        self.ph, self.pw = pano.shape[:2]
+        self._pano = pack(pano).ravel()
+        self._ku = np.float32(self.pw / (2 * math.pi))
+        self._kv = np.float32(self.ph / math.pi)
 
-    def sample_pano(self, w: np.ndarray) -> np.ndarray:
-        """Colours of the panorama along world-space rays ``w`` (N, 3)."""
-        lon = np.arctan2(w[:, 0], w[:, 1])
-        lat = np.arcsin(np.clip(w[:, 2], -1.0, 1.0))
-        ph, pw, _ = self.pano.shape
-        u = ((lon * (0.5 / math.pi) + 0.5) * pw).astype(np.int32) % pw
-        v = np.clip(((0.5 - lat / math.pi) * ph).astype(np.int32), 0, ph - 1)
-        return self.pano[v, u]
+    def pano_index(self, w: np.ndarray) -> np.ndarray:
+        """Flat panorama pixel index along world-space rays ``w`` (3, N). Clips w[2] in place."""
+        x, y, z = w
+        lon = np.arctan2(x, y)
+        np.clip(z, -1.0, 1.0, out=z)
+        lat = np.arcsin(z)
+        u = (lon * self._ku + np.float32(self.pw / 2)).astype(np.int32)
+        np.minimum(u, self.pw - 1, out=u)
+        v = (np.float32(self.ph / 2) - lat * self._kv).astype(np.int32)
+        np.clip(v, 0, self.ph - 1, out=v)
+        v *= self.pw
+        v += u
+        return v
 
     def shade(self, w: np.ndarray) -> np.ndarray:
-        return self.sample_pano(w)
+        return self._pano[self.pano_index(w)]
 
-    def render(self, rotation: np.ndarray) -> np.ndarray:
-        r = np.asarray(rotation, dtype=np.float32).T                  # device -> world
-        left = self.shade(self._rays[0] @ r)
-        right = left.copy() if self._same else self.shade(self._rays[1] @ r)
-        return self.side_by_side([left, right])
+    def render(self, rotation: np.ndarray) -> Frame:
+        w = np.asarray(rotation, dtype=np.float32) @ self._rays           # device -> world
+        return self._finish(self.shade(w))
 
 
 class VirtualScreenRenderer(PanoramaRenderer):
@@ -93,30 +127,33 @@ class VirtualScreenRenderer(PanoramaRenderer):
 
     def __init__(self, background: np.ndarray, image: np.ndarray, tables: Sequence[RayTable],
                  width: float = 2.4, distance: float = 2.0, dim: float = 0.35) -> None:
-        super().__init__((background * dim).astype(np.uint8), tables)
+        super().__init__((background[..., :3] * dim).astype(np.uint8), tables)
         self.width, self.distance = width, distance
         self.set_image(image)
 
     def set_image(self, image: np.ndarray) -> None:
-        if image.ndim != 3 or image.shape[2] != 3:
+        if image.ndim != 3 or image.shape[2] not in (3, 4):
             raise ValueError("image must be (H, W, 3)")
-        self.image = np.ascontiguousarray(image)
-        self.height = self.width * image.shape[0] / image.shape[1]
+        self.ih, self.iw = image.shape[:2]
+        self._image = pack(image).ravel()
+        self.height = self.width * self.ih / self.iw
 
     def shade(self, w: np.ndarray) -> np.ndarray:
-        out = self.sample_pano(w)
-        ahead = w[:, 1] > 1e-3
-        t = self.distance / np.where(ahead, w[:, 1], 1.0)
-        x, z = w[:, 0] * t, w[:, 2] * t
-        on = ahead & (np.abs(x) < self.width / 2) & (np.abs(z) < self.height / 2)
-        ih, iw, _ = self.image.shape
-        u = np.clip(((x[on] / self.width + 0.5) * iw).astype(np.int32), 0, iw - 1)
-        v = np.clip(((0.5 - z[on] / self.height) * ih).astype(np.int32), 0, ih - 1)
-        out[on] = self.image[v, u]
+        out = self._pano[self.pano_index(w)]
+        x, y, z = w
+        ahead = y > 1e-3
+        t = np.float32(self.distance) / np.where(ahead, y, np.float32(1.0))
+        sx, sz = x * t, z * t
+        on = ahead & (np.abs(sx) < self.width / 2) & (np.abs(sz) < self.height / 2)
+        u = ((sx[on] / self.width + 0.5) * self.iw).astype(np.int32)
+        v = ((0.5 - sz[on] / self.height) * self.ih).astype(np.int32)
+        np.clip(u, 0, self.iw - 1, out=u)
+        np.clip(v, 0, self.ih - 1, out=v)
+        out[on] = self._image[v * self.iw + u]
         return out
 
 
-class PassthroughRenderer(_Eyes):
+class PassthroughRenderer(_Frame):
     """The front camera's view, mapped to the true directions each eye looks in.
 
     The camera is a pinhole with horizontal field ``hfov_deg`` looking
@@ -129,39 +166,17 @@ class PassthroughRenderer(_Eyes):
         super().__init__(tables)
         self.src_w, self.src_h = src_w, src_h
         f = (src_w / 2) / math.tan(math.radians(hfov_deg) / 2) * zoom
-        self._maps = []
-        for rays, dark in zip(self._rays, self._dark):
-            ahead = rays[:, 1] > 1e-3
-            y = np.where(ahead, rays[:, 1], 1.0)
-            px = src_w / 2 + f * rays[:, 0] / y
-            py = src_h / 2 - f * rays[:, 2] / y
-            seen = ahead & (px >= 0) & (px < src_w) & (py >= 0) & (py < src_h)
-            idx = (np.clip(py.astype(np.int32), 0, src_h - 1) * src_w
-                   + np.clip(px.astype(np.int32), 0, src_w - 1))
-            self._maps.append((idx, ~seen | dark))
+        x, y, z = self._rays
+        ahead = y > 1e-3
+        yy = np.where(ahead, y, 1.0)
+        px = src_w / 2 + f * x / yy
+        py = src_h / 2 - f * z / yy
+        seen = ahead & (px >= 0) & (px < src_w) & (py >= 0) & (py < src_h)
+        self._idx = (np.clip(py.astype(np.int32), 0, src_h - 1) * src_w
+                     + np.clip(px.astype(np.int32), 0, src_w - 1))
+        self._dark = self._dark | ~seen
 
-    def render(self, frame: np.ndarray) -> np.ndarray:
+    def render(self, frame: np.ndarray) -> Frame:
         if frame.shape[:2] != (self.src_h, self.src_w):
             raise ValueError(f"expected a {self.src_w}x{self.src_h} frame, got {frame.shape[1]}x{frame.shape[0]}")
-        flat = frame.reshape(-1, 3)
-        eyes = []
-        for idx, hidden in self._maps:
-            eye = flat[idx]
-            eye[hidden] = 0
-            eyes.append(eye)
-        return self.side_by_side(eyes)
-
-
-def draw_rec_indicator(frame: np.ndarray, elapsed_s: float, blink: bool = True) -> np.ndarray:
-    """Red dot in the upper-left of each eye (wearer-facing status light)."""
-    h, w, _ = frame.shape
-    eye_w = w // 2
-    r = max(3, h // 60)
-    yy, xx = np.ogrid[:2 * r + 1, :2 * r + 1]
-    disk = (yy - r) ** 2 + (xx - r) ** 2 <= r * r
-    if blink and int(elapsed_s * 2) % 2:
-        return frame
-    for ox in (0, eye_w):
-        y0, x0 = h // 8, ox + eye_w // 6
-        frame[y0:y0 + 2 * r + 1, x0:x0 + 2 * r + 1][disk] = (230, 40, 40)
-    return frame
+        return self._finish(pack(frame).ravel()[self._idx])

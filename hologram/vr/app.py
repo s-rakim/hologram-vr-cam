@@ -234,9 +234,7 @@ class VrApp:
 
     # -- rendering ----------------------------------------------------------------------------
     def eye_size(self) -> tuple[int, int]:
-        w, h = self.cfg.display.size
-        s = self.cfg.display.render_scale
-        return max(8, int(w / 2 * s)), max(8, int(h * s))
+        return self.cfg.display.eye_size()
 
     def tables(self) -> tuple[RayTable, RayTable]:
         if self._tables is None:
@@ -257,7 +255,7 @@ class VrApp:
         return self._renderer
 
     def render(self) -> np.ndarray | None:
-        """The next side-by-side frame, or None when nothing on screen needs to change."""
+        """The next side-by-side RGBX frame, or None when nothing on screen needs to change."""
         if self.asleep:
             return None
         if self.mode is Mode.PASSTHROUGH and self.hw.camera is not None:

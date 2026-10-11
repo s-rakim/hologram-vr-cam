@@ -268,3 +268,31 @@ def field_of_view(optics: ReflectorOptics | LensOptics, samples: int = 241) -> F
         nasal=t_in,
         temporal=t_out,
     )
+
+
+def eye_view(panel: np.ndarray, table: RayTable, size: int = 480, fov_deg: float = 140.0) -> np.ndarray:
+    """What one eye sees: the panel image (h, w, C) pushed back through the optics.
+
+    Returns a (size, size, C) image covering ``fov_deg`` in azimuth and
+    elevation (equal-angle projection, straight ahead in the middle), with
+    black where the eye sees no panel. Handy to check the pre-warp and see
+    the field of view without building anything."""
+    r = table.rays[table.valid]
+    colours = panel[table.valid]
+    half = math.radians(fov_deg) / 2
+    az = np.arctan2(r[:, 0], r[:, 1])
+    el = np.arcsin(np.clip(r[:, 2], -1, 1))
+    u = np.round((az / half + 1) * (size - 1) / 2).astype(int)
+    v = np.round((1 - el / half) * (size - 1) / 2).astype(int)
+    keep = (u >= 0) & (u < size) & (v >= 0) & (v < size)
+    out = np.zeros((size, size) + panel.shape[2:], panel.dtype)
+    out[v[keep], u[keep]] = colours[keep]
+    filled = np.zeros((size, size), bool)
+    filled[v[keep], u[keep]] = True
+    for _ in range(2):                      # close the pinholes between splatted pixels
+        for dv, du in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+            src = np.roll(np.roll(out, dv, 0), du, 1)
+            have = np.roll(np.roll(filled, dv, 0), du, 1) & ~filled
+            out[have] = src[have]
+            filled |= have
+    return out

@@ -61,7 +61,7 @@ class Picamera2Preview:
             self.running = False
 
     def frame(self) -> np.ndarray | None:
-        return self.cam.capture_array("main")[..., :3] if self.running else None   # [R, G, B, X] -> RGB
+        return self.cam.capture_array("main") if self.running else None   # (H, W, 4): R, G, B, X bytes
 
 
 class MockPreview:
@@ -89,6 +89,11 @@ class MockPreview:
         g = np.broadcast_to(y * 255, (h, w))
         b = np.full((h, w), 140.0)
         return np.stack(np.broadcast_arrays(r, g, b), axis=-1).astype(np.uint8)
+
+
+def _render_size(cfg: VrConfig) -> tuple[int, int]:
+    w, h = cfg.display.eye_size()
+    return 2 * w, h
 
 
 def build_pi(cfg: VrConfig, windowed: bool = False) -> VrHardware:
@@ -128,7 +133,7 @@ def build_pi(cfg: VrConfig, windowed: bool = False) -> VrHardware:
     return VrHardware(
         camera=camera,
         imu=imu,
-        display=PygameDisplay(cfg.display.size, windowed=windowed) if cfg.display.enabled else NullDisplay(),
+        display=PygameDisplay(_render_size(cfg), windowed=windowed) if cfg.display.enabled else NullDisplay(),
         audio_sink=aplay_factory(cfg.sound.device),
         gauge=gauge,
         read_temperature=lambda: soc_temperature(cfg.thermal.sensor_path),
@@ -143,7 +148,7 @@ def build_mock(cfg: VrConfig, windowed: bool = False) -> VrHardware:
     hw = VrHardware(
         camera=MockPreview() if cfg.passthrough.enabled else None,
         imu=MockImu() if cfg.tracking.enabled else None,
-        display=PygameDisplay(cfg.display.size, windowed=True) if windowed else NullDisplay(),
+        display=PygameDisplay(_render_size(cfg), windowed=True) if windowed else NullDisplay(),
         audio_sink=lambda rate: MemorySink(rate, realtime=True),
         gauge=MockFuelGauge(90.0),
         read_temperature=lambda: 50.0,

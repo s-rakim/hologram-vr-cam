@@ -34,6 +34,8 @@ class NullDisplay:
 class PygameDisplay:
     """Fullscreen on the Pi (SDL KMS/DRM, no desktop needed) or a window.
 
+    Frames arrive at the render resolution as RGBX and are shown without a
+    copy; SDL's GPU renderer scales them up to the panels (pygame.SCALED).
     In a window, keys stand in for the helmet's buttons: M = mode,
     SPACE = action, - and = (or keypad - and +) = volume, ESC = quit.
     """
@@ -41,20 +43,28 @@ class PygameDisplay:
     KEYS = {"m": "mode", "space": "action", "-": "volume_down", "=": "volume_up",
             "[-]": "volume_down", "[+]": "volume_up", "escape": "quit"}
 
-    def __init__(self, size: tuple[int, int], windowed: bool = False) -> None:
+    def __init__(self, render_size: tuple[int, int], windowed: bool = False) -> None:
         if not windowed and "DISPLAY" not in os.environ and "WAYLAND_DISPLAY" not in os.environ:
             os.environ.setdefault("SDL_VIDEODRIVER", "kmsdrm")
         import pygame
 
         self.pg = pygame
         pygame.display.init()
-        flags = 0 if windowed else pygame.FULLSCREEN
-        self.screen = pygame.display.set_mode(size if not windowed else (size[0] // 2, size[1] // 2), flags)
+        flags = pygame.SCALED if windowed else pygame.FULLSCREEN | pygame.SCALED
+        try:
+            self.screen = pygame.display.set_mode(render_size, flags)
+        except pygame.error:                   # no GPU scaling: scale in software instead
+            self.screen = pygame.display.set_mode((0, 0) if not windowed else render_size,
+                                                  0 if windowed else pygame.FULLSCREEN)
         pygame.display.set_caption("Hologram VR")
         pygame.mouse.set_visible(False)
 
     def show(self, frame: np.ndarray) -> None:
-        surf = self.pg.surfarray.make_surface(np.swapaxes(frame, 0, 1))
+        h, w = frame.shape[:2]
+        if frame.shape[2] == 4 and frame.flags["C_CONTIGUOUS"]:
+            surf = self.pg.image.frombuffer(frame, (w, h), "RGBX")
+        else:
+            surf = self.pg.surfarray.make_surface(np.swapaxes(frame[..., :3], 0, 1))
         if surf.get_size() != self.screen.get_size():
             surf = self.pg.transform.scale(surf, self.screen.get_size())
         self.screen.blit(surf, (0, 0))

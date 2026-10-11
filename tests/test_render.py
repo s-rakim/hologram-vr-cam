@@ -5,7 +5,7 @@ import pytest
 
 from hologram import quaternion as qt
 from hologram.vr.optics import LensOptics, ReflectorOptics, eye_grid, field_of_view, stereo_tables
-from hologram.vr.render import PanoramaRenderer, PassthroughRenderer, VirtualScreenRenderer, grid_world
+from hologram.vr.render import PanoramaRenderer, PassthroughRenderer, VirtualScreenRenderer, grid_world, pack, unpack
 
 PINHOLE = LensOptics(fov_deg=20.0, k1=0.0, k2=0.0)
 
@@ -45,15 +45,15 @@ def _pano_with_marker():
 def test_panorama_forward_shows_the_forward_marker():
     r = PanoramaRenderer(_pano_with_marker(), stereo_tables(PINHOLE, 40, 40))
     frame = r.render(rot(qt.IDENTITY))
-    assert frame.shape == (40, 80, 3)
-    assert tuple(frame[20, 20]) == (255, 0, 0)
-    assert tuple(frame[20, 60]) == (255, 0, 0)      # right eye too
+    assert frame.shape == (40, 80, 4)          # RGBX
+    assert tuple(frame[20, 20][:3]) == (255, 0, 0)
+    assert tuple(frame[20, 60][:3]) == (255, 0, 0)      # right eye too
 
 
 def test_turning_left_brings_left_marker_into_view():
     r = PanoramaRenderer(_pano_with_marker(), stereo_tables(PINHOLE, 40, 40))
     frame = r.render(rot(qt.yaw_quat(math.radians(90))))
-    assert tuple(frame[20, 20]) == (0, 255, 0)
+    assert tuple(frame[20, 20][:3]) == (0, 255, 0)
 
 
 def test_looking_up_raises_the_horizon_out_of_view():
@@ -67,9 +67,9 @@ def test_virtual_screen_shows_the_photo_straight_ahead():
     photo = np.full((90, 160, 3), (10, 200, 30), np.uint8)
     r = VirtualScreenRenderer(grid_world(360, 180), photo, stereo_tables(PINHOLE, 40, 40))
     frame = r.render(rot(qt.IDENTITY))
-    assert tuple(frame[20, 20]) == (10, 200, 30)
+    assert tuple(frame[20, 20][:3]) == (10, 200, 30)
     behind = r.render(rot(qt.yaw_quat(math.radians(180))))
-    assert tuple(behind[20, 20]) != (10, 200, 30)
+    assert tuple(behind[20, 20][:3]) != (10, 200, 30)
 
 
 def test_passthrough_maps_true_directions():
@@ -77,7 +77,7 @@ def test_passthrough_maps_true_directions():
     src[40:50, 75:85] = 200                              # the camera's centre
     r = PassthroughRenderer(160, 90, stereo_tables(LensOptics(fov_deg=120, k1=0, k2=0), 64, 72), hfov_deg=90)
     frame = r.render(src)
-    assert frame.shape == (72, 128, 3)
+    assert frame.shape == (72, 128, 4)
     assert frame[36, 32, 0] == 200 and frame[36, 96, 0] == 200
     assert frame[36, 0].sum() == 0                      # 60 deg off-axis: outside the camera's 45 deg
     with pytest.raises(ValueError):
@@ -139,7 +139,7 @@ def test_reflector_panorama_puts_the_forward_marker_where_the_eye_looks_ahead():
     for eye, t in enumerate(tables):
         ahead = np.where(t.valid, t.rays @ np.array([0, 1, 0], np.float32), -1)
         i, j = np.unravel_index(np.argmax(ahead), ahead.shape)
-        assert tuple(frame[i, j + eye * 96]) == (255, 0, 0)
+        assert tuple(frame[i, j + eye * 96][:3]) == (255, 0, 0)
     assert (frame[:, :96][~tables[0].valid] == 0).all()     # unseen pixels stay dark
 
 
@@ -149,3 +149,12 @@ def test_reflector_panels_fit_between_face_and_mirror():
     corners = o.panel_corners()
     assert corners[:, 1].min() > 20 and corners[:, 2].min() > 10   # clear of the brow and eyelids
     assert corners[:, 0].min() > 5                          # the two panels don't meet in the middle
+
+
+def test_pack_round_trip_and_rgbx_frames():
+    img = np.random.default_rng(1).integers(0, 255, (5, 7, 3), dtype=np.uint8)
+    packed = pack(img)
+    assert packed.shape == (5, 7) and packed.dtype == np.uint32
+    assert np.array_equal(unpack(packed)[..., :3], img)
+    with pytest.raises(ValueError):
+        pack(np.zeros((5, 7), np.uint8))

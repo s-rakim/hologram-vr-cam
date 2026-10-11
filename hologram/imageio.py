@@ -9,10 +9,10 @@ import numpy as np
 
 
 def write_png(path: str | Path, rgb: np.ndarray) -> None:
-    """Write an (H, W, 3) uint8 array as an 8-bit RGB PNG."""
-    rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
-    if rgb.ndim != 3 or rgb.shape[2] != 3:
-        raise ValueError("expected an (H, W, 3) array")
+    """Write an (H, W, 3) RGB or (H, W, 4) RGBX uint8 array as an 8-bit RGB PNG."""
+    if rgb.ndim != 3 or rgb.shape[2] not in (3, 4):
+        raise ValueError("expected an (H, W, 3) or (H, W, 4) array")
+    rgb = np.ascontiguousarray(rgb[..., :3], dtype=np.uint8)
     h, w, _ = rgb.shape
     raw = b"".join(b"\x00" + rgb[y].tobytes() for y in range(h))
 

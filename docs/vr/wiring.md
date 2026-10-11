@@ -37,7 +37,7 @@ See `drawings/04_wiring.svg` for the schematic.
 | ground | MAX98357A right `GND` | Raspberry Pi 5 pin 25 (GND) |  |
 | i2s | MAX98357A right `BCLK` | Raspberry Pi 5 pin 12 (GPIO18 PCM_CLK) |  |
 | i2s | MAX98357A right `LRC` | Raspberry Pi 5 pin 35 (GPIO19 PCM_FS) |  |
-| i2s | MAX98357A right `DIN` | Raspberry Pi 5 pin 40 (GPIO21 PCM_DOUT) | SD via 220 k to VIN = right channel |
+| i2s | MAX98357A right `DIN` | Raspberry Pi 5 pin 40 (GPIO21 PCM_DOUT) | SD via 470 k to VIN = right channel |
 | audio | MAX98357A left `OUT+` | Speaker L `+` |  |
 | audio | MAX98357A left `OUT-` | Speaker L `-` |  |
 | audio | MAX98357A right `OUT+` | Speaker R `+` |  |
