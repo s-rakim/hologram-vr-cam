@@ -1,4 +1,4 @@
-"""Minimal IFC4 (STEP physical file) writer for the glasses model.
+"""Minimal IFC4 (STEP physical file) writer for a product model.
 
 Revit opens IFC natively (File > Open > IFC), so this is the most direct
 way to get the model into Revit without Revit itself being installed here.
@@ -12,7 +12,7 @@ import datetime as _dt
 import uuid
 
 from .geometry import Solid, Vec3
-from .spec import MATERIALS, PARTS, Part
+from .product import Product
 
 _GUID_CHARS = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_$"
 _NAMESPACE = uuid.UUID("6f1d3c0e-5a8b-4f7e-9a51-0b6c1e2d7f43")
@@ -95,8 +95,7 @@ def _solid(step: _Step, solid: Solid) -> int:
                     f"#{step.direction(0.0, 0.0, 1.0)}", _real(solid.depth))
 
 
-def build_ifc(parts: tuple[Part, ...] = PARTS, author: str = "Malcolm Opondo",
-              timestamp: _dt.datetime | None = None) -> str:
+def build_ifc(product: Product, author: str = "Malcolm Opondo", timestamp: _dt.datetime | None = None) -> str:
     stamp = (timestamp or _dt.datetime(2026, 1, 1)).strftime("%Y-%m-%dT%H:%M:%S")
     s = _Step()
     origin = s.placement3d((0.0, 0.0, 0.0), (0.0, 0.0, 1.0), (1.0, 0.0, 0.0))
@@ -112,24 +111,29 @@ def build_ifc(parts: tuple[Part, ...] = PARTS, author: str = "Malcolm Opondo",
     body_ctx = s.add("IFCGEOMETRICREPRESENTATIONSUBCONTEXT", "'Body'", "'Model'", "*", "*", "*", "*",
                      f"#{context}", "$", ".MODEL_VIEW.", "$")
 
-    project = s.add("IFCPROJECT", _str(ifc_guid("project")), "$", _str("Hologram VR Cam glasses"),
-                    _str("VR display glasses with a POV video camera"), "$", "$", "$",
+    k = product.key
+
+    def guid(name: str) -> str:
+        return ifc_guid(f"{k}:{name}")
+
+    project = s.add("IFCPROJECT", _str(guid("project")), "$", _str(product.name),
+                    _str(product.tagline), "$", "$", "$",
                     _ref([context]), f"#{unit_assignment}")
     site_pl = s.add("IFCLOCALPLACEMENT", "$", f"#{origin}")
-    site = s.add("IFCSITE", _str(ifc_guid("site")), "$", _str("Workshop"), "$", "$", f"#{site_pl}",
+    site = s.add("IFCSITE", _str(guid("site")), "$", _str("Workshop"), "$", "$", f"#{site_pl}",
                  "$", "$", ".ELEMENT.", "$", "$", "$", "$", "$")
     bldg_pl = s.add("IFCLOCALPLACEMENT", f"#{site_pl}", f"#{origin}")
-    building = s.add("IFCBUILDING", _str(ifc_guid("building")), "$", _str("Hologram VR Cam lab"), "$", "$",
+    building = s.add("IFCBUILDING", _str(guid("building")), "$", _str("Hologram VR Cam lab"), "$", "$",
                      f"#{bldg_pl}", "$", "$", ".ELEMENT.", "$", "$", "$")
     storey_pl = s.add("IFCLOCALPLACEMENT", f"#{bldg_pl}", f"#{origin}")
-    storey = s.add("IFCBUILDINGSTOREY", _str(ifc_guid("storey")), "$", _str("Bench"), "$", "$",
+    storey = s.add("IFCBUILDINGSTOREY", _str(guid("storey")), "$", _str("Bench"), "$", "$",
                    f"#{storey_pl}", "$", "$", ".ELEMENT.", "0.")
     for i, (whole, piece) in enumerate(((project, site), (site, building), (building, storey))):
-        s.add("IFCRELAGGREGATES", _str(ifc_guid(f"aggregate-{i}")), "$", "$", "$", f"#{whole}", _ref([piece]))
+        s.add("IFCRELAGGREGATES", _str(guid(f"aggregate-{i}")), "$", "$", "$", f"#{whole}", _ref([piece]))
 
     styles: dict[str, int] = {}
     materials: dict[str, int] = {}
-    for key, mat in MATERIALS.items():
+    for key, mat in product.materials.items():
         r, g, b = (c / 255.0 for c in mat.rgb)
         colour = s.add("IFCCOLOURRGB", "$", _real(r), _real(g), _real(b))
         shading = s.add("IFCSURFACESTYLESHADING", f"#{colour}", _real(mat.transparency / 100.0))
@@ -138,30 +142,30 @@ def build_ifc(parts: tuple[Part, ...] = PARTS, author: str = "Malcolm Opondo",
 
     elements: list[int] = []
     by_material: dict[str, list[int]] = {}
-    for part in parts:
+    for part in product.parts:
         items = [_solid(s, solid) for solid in part.solids]
         for item in items:
             s.add("IFCSTYLEDITEM", f"#{item}", _ref([styles[part.material]]), "$")
         rep = s.add("IFCSHAPEREPRESENTATION", f"#{body_ctx}", "'Body'", "'SweptSolid'", _ref(items))
         shape = s.add("IFCPRODUCTDEFINITIONSHAPE", "$", "$", _ref([rep]))
         placement = s.add("IFCLOCALPLACEMENT", f"#{storey_pl}", f"#{origin}")
-        element = s.add(part.ifc_class.upper(), _str(ifc_guid(part.id)), "$", _str(part.name),
+        element = s.add(part.ifc_class.upper(), _str(guid(part.id)), "$", _str(part.name),
                         _str(f"{part.group} / {part.id}"), _str(part.name), f"#{placement}",
                         f"#{shape}", _str(part.id), f".{part.ifc_type}.")
         elements.append(element)
         by_material.setdefault(part.material, []).append(element)
 
-    s.add("IFCRELCONTAINEDINSPATIALSTRUCTURE", _str(ifc_guid("contained")), "$", "$", "$",
+    s.add("IFCRELCONTAINEDINSPATIALSTRUCTURE", _str(guid("contained")), "$", "$", "$",
           _ref(elements), f"#{storey}")
     for key, objs in by_material.items():
-        s.add("IFCRELASSOCIATESMATERIAL", _str(ifc_guid(f"material-{key}")), "$", "$", "$",
+        s.add("IFCRELASSOCIATESMATERIAL", _str(guid(f"material-{key}")), "$", "$", "$",
               _ref(objs), f"#{materials[key]}")
 
     header = "\n".join((
         "ISO-10303-21;",
         "HEADER;",
         "FILE_DESCRIPTION(('ViewDefinition [ReferenceView_V1.2]'),'2;1');",
-        f"FILE_NAME('hologram_glasses.ifc','{stamp}',({_str(author)}),('hologram-vr-cam'),"
+        f"FILE_NAME('hologram_{k}.ifc','{stamp}',({_str(author)}),('hologram-vr-cam'),"
         "'hologram-vr-cam cad.ifc_writer','hologram-vr-cam','');",
         "FILE_SCHEMA(('IFC4'));",
         "ENDSEC;",

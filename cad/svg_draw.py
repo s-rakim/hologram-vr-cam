@@ -1,4 +1,4 @@
-"""SVG drawings of the glasses: x-ray isometric, exploded view and a
+"""SVG drawing sheets for a product: x-ray isometric, exploded view and a
 third-angle orthographic sheet with dimensions.
 
 A tiny painter's-algorithm renderer: every extrusion is broken into faces,
@@ -11,7 +11,7 @@ import html
 from dataclasses import dataclass
 
 from .geometry import Vec3, add, cross, dot, normalize
-from .spec import FRAME_HALF_WIDTH, IPD, LENS_CENTER_X, LENS_W, MATERIALS, PARTS, POD_Y, Part, overall_envelope
+from .product import MATERIALS, Part, Product
 
 FONT = "Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif"
 INK = "#1b2230"
@@ -40,7 +40,6 @@ class Camera:
 FRONT = Camera((0.0, 1.0, 0.0))
 TOP = Camera((0.0, 0.0, 1.0), (0.0, -1.0, 0.0))
 SIDE = Camera((-1.0, 0.0, 0.0))                     # third-angle right-side view
-ISO = Camera((0.95, 1.0, 0.72))
 
 
 @dataclass
@@ -135,13 +134,13 @@ def text(x: float, y: float, s: str, size: float = 12, weight: int = 400, fill: 
             f'fill="{fill}" text-anchor="{anchor}" {extra}>{html.escape(s)}</text>')
 
 
-def sheet(width: int, height: int, title: str, subtitle: str, number: str, body: str) -> str:
+def sheet(product: Product, width: int, height: int, title: str, subtitle: str, number: str, body: str) -> str:
     """Drawing border and title block around ``body``."""
     tb_w, tb_h = 380, 92
     tx, ty = width - tb_w - 24, height - tb_h - 24
-    env = overall_envelope()
+    env = product.envelope()
     rows = [
-        ("PROJECT", "Hologram VR Cam glasses"),
+        ("PROJECT", product.name),
         ("DRAWN BY", "Malcolm Opondo"),
         ("UNITS / SIZE", f"mm  |  {env.width:.0f} W x {env.depth:.0f} D x {env.height:.0f} H"),
     ]
@@ -170,35 +169,19 @@ def sheet(width: int, height: int, title: str, subtitle: str, number: str, body:
 # --------------------------------------------------------------------------
 # Sheet 1: assembled x-ray isometric
 # --------------------------------------------------------------------------
-ACCESSORIES = ("visor", "magnets")
-
-
-def draw_assembly() -> str:
+def draw_assembly(product: Product) -> str:
     width, height = 1500, 900
-    worn = tuple(p for p in PARTS if p.id not in ACCESSORIES)
-    faces = collect_faces(worn, ISO, xray=True)
+    iso = Camera(product.iso)
+    faces = collect_faces(product.worn_parts(), iso, xray=True)
     model_box = (330.0, 110.0, width - 660.0, 660.0)
     fit = fit_box(faces_bounds(faces), model_box)
     body = [faces_svg(faces, fit, 0.7)]
-
-    callouts = [
-        ("camera", "POV camera", "OV5647 5 MP, 1080p30 H.264 video"),
-        ("privacy_led", "Privacy LED", "Lit whenever the camera records"),
-        ("pi_zero_2w", "Raspberry Pi Zero 2 W", "Capture, encode, head-tracked render"),
-        ("battery", "Power pod (left temple)", "1000 mAh LiPo + charger / 5 V boost"),
-        ("oled_right", "Stereo display", "2x 1080p micro-OLED + birdbath optics"),
-        ("imu", "Head tracking", "MPU-6050 IMU, 3DoF orientation"),
-        ("microphone", "Microphone", "INMP441 I2S MEMS, records audio"),
-        ("capture_button", "Capture button", "Press = photo, hold = video"),
-        ("touch_strip", "Touch strip", "Tap = mode, double tap = recenter"),
-        ("speaker", "Open-ear speaker", "Driven by a MAX98357A I2S amp"),
-    ]
-    body.append(_callouts(callouts, ISO, fit, width, model_box[0] + model_box[2] / 2))
-    body.append(text(36, height - 36, "Shells drawn translucent so the electronics are visible. "
-                     "Wearer's right temple in front; magnetic VR visor not shown.", 11, 400, MUTED))
-    return sheet(width, height, "HOLOGRAM VR CAM - ASSEMBLY (X-RAY ISOMETRIC)",
-                 "VR display glasses with a POV video camera, driven by a Raspberry Pi Zero 2 W", "1 / 4",
-                 "\n".join(body))
+    body.append(_callouts(product, iso, fit, width, model_box[0] + model_box[2] / 2, height))
+    hidden = ", ".join(product.part(p).name.lower() for p in product.accessories)
+    body.append(text(36, height - 36, "Shells drawn translucent so the electronics are visible."
+                     + (f" Not shown: {hidden}." if hidden else ""), 11, 400, MUTED))
+    return sheet(product, width, height, f"{product.title} - ASSEMBLY (X-RAY ISOMETRIC)", product.tagline,
+                 "1 / 4", "\n".join(body))
 
 
 def _part_anchor(part: Part, cam: Camera, fit: Fit, explode: float = 0.0) -> tuple[float, float]:
@@ -209,15 +192,14 @@ def _part_anchor(part: Part, cam: Camera, fit: Fit, explode: float = 0.0) -> tup
     return fit(x, y)
 
 
-def _callouts(items: list[tuple[str, str, str]], cam: Camera, fit: Fit, width: int, split_x: float) -> str:
+def _callouts(product: Product, cam: Camera, fit: Fit, width: int, split_x: float, height: int) -> str:
     """Two-line labels stacked in the left and right margins with leader lines."""
-    parts = {p.id: p for p in PARTS}
-    anchors = [(_part_anchor(parts[pid], cam, fit), title, detail) for pid, title, detail in items]
+    anchors = [(_part_anchor(product.part(pid), cam, fit), title, detail) for pid, title, detail in product.callouts]
     left = sorted([a for a in anchors if a[0][0] < split_x], key=lambda a: a[0][1])
     right = sorted([a for a in anchors if a[0][0] >= split_x], key=lambda a: a[0][1])
     out = []
     for column, x_text, anchor, x_lead in ((left, 40, "start", 300), (right, width - 40, "end", width - 300)):
-        ys = _spread([a[0][1] for a in column], 150, 760, 58)
+        ys = _spread([a[0][1] for a in column], 150, height - 140, 58)
         for ((ax, ay), title, detail), ty in zip(column, ys):
             out.append(f'<polyline points="{x_text:.1f},{ty + 8:.1f} {x_lead:.1f},{ty + 8:.1f} {ax:.1f},{ay:.1f}" '
                        f'fill="none" stroke="{ACCENT}" stroke-width="1" stroke-opacity="0.85"/>')
@@ -244,45 +226,53 @@ def _spread(ys: list[float], lo: float, hi: float, gap: float) -> list[float]:
 # --------------------------------------------------------------------------
 # Sheet 2: exploded view with numbered balloons and parts list
 # --------------------------------------------------------------------------
-def draw_exploded() -> str:
+SIDE_WORDS = (" (left eye)", " (right eye)", " (left temple)", " (right temple)", " (left)", " (right)")
+
+
+def base_name(name: str) -> str:
+    for w in SIDE_WORDS:
+        name = name.replace(w, "")
+    return name
+
+
+def draw_exploded(product: Product) -> str:
     width, height = 1600, 1000
-    faces = collect_faces(PARTS, ISO, explode=1.0)
+    iso = Camera(product.iso)
+    shown = product.worn_parts()
+    faces = collect_faces(shown, iso, explode=1.0)
     fit = fit_box(faces_bounds(faces), (40, 100, 1080, 800))
     body = [faces_svg(faces, fit, 0.6)]
 
-    # One balloon per BOM-visible part, de-duplicating mirrored pairs.
-    numbered: list[tuple[int, Part, str]] = []
+    # One balloon number per distinct part, mirrored pairs share a number.
+    numbered: list[tuple[int, Part]] = []
     seen: dict[str, int] = {}
-    for part in PARTS:
-        base = part.name.replace(" (left)", "").replace(" (right)", "").replace(" (left eye)", "") \
-            .replace(" (right eye)", "").replace(" (left temple)", "").replace(" (right temple)", "")
-        if base not in seen:
-            seen[base] = len(seen) + 1
-        numbered.append((seen[base], part, base))
+    for part in shown:
+        seen.setdefault(base_name(part.name), len(seen) + 1)
+        numbered.append((seen[base_name(part.name)], part))
 
-    for n, part, _ in numbered:
-        x, y = _part_anchor(part, ISO, fit, 1.0)
+    for n, part in numbered:
+        x, y = _part_anchor(part, iso, fit, 1.0)
         body.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="9" fill="#ffffff" stroke="{ACCENT}" stroke-width="1.4"/>')
         body.append(text(x, y + 3.6, str(n), 9.5, 700, ACCENT, "middle"))
 
-    # Parts list.
     lx, ly = 1150, 110
-    body.append(f'<rect x="{lx - 14}" y="{ly - 22}" width="{width - lx - 22}" height="{len(seen) * 21.5 + 40}" '
+    row = min(21.5, (height - 260) / max(1, len(seen)))
+    body.append(f'<rect x="{lx - 14}" y="{ly - 22}" width="{width - lx - 22}" height="{len(seen) * row + 40:.1f}" '
                 f'fill="#ffffff" stroke="{INK}" stroke-width="0.8"/>')
     body.append(text(lx, ly, "PARTS", 10, 700, MUTED, extra='letter-spacing="1"'))
     counts: dict[int, int] = {}
-    for n, _, _ in numbered:
+    for n, _ in numbered:
         counts[n] = counts.get(n, 0) + 1
     for base, n in seen.items():
-        y = ly + 8 + n * 21.5
-        qty = counts[n]
-        body.append(f'<circle cx="{lx + 8}" cy="{y - 4}" r="8" fill="#ffffff" stroke="{ACCENT}" stroke-width="1.2"/>')
+        y = ly + 8 + n * row
+        body.append(f'<circle cx="{lx + 8}" cy="{y - 4:.1f}" r="8" fill="#ffffff" stroke="{ACCENT}" stroke-width="1.2"/>')
         body.append(text(lx + 8, y - 0.5, str(n), 8.5, 700, ACCENT, "middle"))
-        body.append(text(lx + 24, y, base + (f"  x{qty}" if qty > 1 else ""), 11))
+        body.append(text(lx + 24, y, base + (f"  x{counts[n]}" if counts[n] > 1 else ""), 11))
+    hidden = ", ".join(product.part(p).name.lower() for p in product.accessories)
     body.append(text(36, height - 36, "Parts are pulled apart along their assembly direction. "
-                     "Balloon numbers match the parts list and the BOM in docs/bom.md.", 11, 400, MUTED))
-    return sheet(width, height, "HOLOGRAM VR CAM - EXPLODED ASSEMBLY",
-                 "Build order: frame > optics > brow electronics > temples (compute right, power left) > visor",
+                     f"Balloon numbers match the parts list; the BOM is docs/{product.key}/bom.md."
+                     + (f" Not shown: {hidden}." if hidden else ""), 11, 400, MUTED))
+    return sheet(product, width, height, f"{product.title} - EXPLODED ASSEMBLY", product.exploded_subtitle,
                  "2 / 4", "\n".join(body))
 
 
@@ -295,7 +285,7 @@ def _dim(p1: tuple[float, float], p2: tuple[float, float], offset: float, label:
     (x1, y1), (x2, y2) = p1, p2
     out = []
     if vertical:
-        x = min(x1, x2) + offset if offset > 0 else min(x1, x2) + offset
+        x = (min(x1, x2) if offset < 0 else max(x1, x2)) + offset
         out += [f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x:.1f}" y2="{y1:.1f}" stroke="{MUTED}" stroke-width="0.6"/>',
                 f'<line x1="{x2:.1f}" y1="{y2:.1f}" x2="{x:.1f}" y2="{y2:.1f}" stroke="{MUTED}" stroke-width="0.6"/>',
                 f'<line x1="{x:.1f}" y1="{y1:.1f}" x2="{x:.1f}" y2="{y2:.1f}" stroke="{INK}" stroke-width="0.9" '
@@ -303,7 +293,7 @@ def _dim(p1: tuple[float, float], p2: tuple[float, float], offset: float, label:
                 text(x - 6, (y1 + y2) / 2, label, 11, 600, INK, "middle",
                      f'transform="rotate(-90 {x - 6:.1f} {(y1 + y2) / 2:.1f})"')]
     else:
-        y = max(y1, y2) + offset
+        y = (max(y1, y2) if offset > 0 else min(y1, y2)) + offset
         out += [f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x1:.1f}" y2="{y:.1f}" stroke="{MUTED}" stroke-width="0.6"/>',
                 f'<line x1="{x2:.1f}" y1="{y2:.1f}" x2="{x2:.1f}" y2="{y:.1f}" stroke="{MUTED}" stroke-width="0.6"/>',
                 f'<line x1="{x1:.1f}" y1="{y:.1f}" x2="{x2:.1f}" y2="{y:.1f}" stroke="{INK}" stroke-width="0.9" '
@@ -312,89 +302,70 @@ def _dim(p1: tuple[float, float], p2: tuple[float, float], offset: float, label:
     return "\n".join(out)
 
 
-def draw_orthographic() -> str:
+def draw_orthographic(product: Product) -> str:
     width, height = 1500, 1080
-    scale = 3.0
-    worn = tuple(p for p in PARTS if p.id not in ACCESSORIES)
-    views = {name: collect_faces(worn, cam, flat=True) for name, cam in
-             (("front", FRONT), ("top", TOP), ("side", SIDE))}
+    worn = product.worn_parts()
+    cams = {"front": FRONT, "top": TOP, "side": SIDE}
+    views = {name: collect_faces(worn, cam, flat=True) for name, cam in cams.items()}
     b = {k: faces_bounds(v) for k, v in views.items()}
+    span = {k: (v[2] - v[0], v[3] - v[1]) for k, v in b.items()}
 
-    front_w = (b["front"][2] - b["front"][0]) * scale
-    front_h = (b["front"][3] - b["front"][1]) * scale
-    top_h = (b["top"][3] - b["top"][1]) * scale
-    side_w = (b["side"][2] - b["side"][0]) * scale
-    left, gap = 130, 110
-    top_y = 120
+    left, gap, top_y = 130, 110, 120
+    scale = min(3.0,
+                (width - left - 100 - gap - 40) / (span["front"][0] + span["side"][0]),
+                (height - 116 - 70 - top_y - gap) / (span["top"][1] + span["front"][1]))
+    front_w, front_h = span["front"][0] * scale, span["front"][1] * scale
+    top_h = span["top"][1] * scale
+    side_w = span["side"][0] * scale
     front_y = top_y + top_h + gap
+    side_x = left + front_w + gap + 40
 
     fits = {
         "top": fit_box(b["top"], (left, top_y, front_w, top_h), scale),
         "front": fit_box(b["front"], (left, front_y, front_w, front_h), scale),
-        "side": fit_box(b["side"], (left + front_w + gap + 40, front_y, side_w, front_h), scale),
+        "side": fit_box(b["side"], (side_x, front_y, side_w, front_h), scale),
     }
     body = ['<defs><marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" '
             f'orient="auto-start-reverse"><path d="M0,1 L9,5 L0,9 z" fill="{INK}"/></marker></defs>']
     for name in ("top", "front", "side"):
         body.append(faces_svg(views[name], fits[name], 0.55))
 
-    def pt(view: str, cam: Camera, p: Vec3) -> tuple[float, float]:
-        x, y, _ = cam.project(p)
-        return fits[view](x, y)
+    def corner(view: str, i: int, j: int) -> tuple[float, float]:
+        return fits[view](b[view][i], b[view][j])
 
-    env = overall_envelope()
-    f = fits["front"]
-    fx0, fy0 = f(b["front"][0], b["front"][1])
-    fx1, fy1 = f(b["front"][2], b["front"][3])
+    env = product.envelope()
+    (fx0, fy0), (fx1, fy1) = corner("front", 0, 1), corner("front", 2, 3)
     body.append(_dim((fx0, fy1), (fx1, fy1), 52, f"{env.width:.0f}"))
     body.append(_dim((fx0, fy0), (fx0, fy1), -34, f"{env.height:.0f}", vertical=True))
-    lens_l = pt("front", FRONT, (LENS_CENTER_X - LENS_W / 2, 0, 22))
-    lens_r = pt("front", FRONT, (LENS_CENTER_X + LENS_W / 2, 0, 22))
-    body.append(_dim(lens_r, lens_l, -16, f"lens {LENS_W:.0f}"))
-    bridge_l = pt("front", FRONT, (LENS_CENTER_X - LENS_W / 2, 0, 22))
-    bridge_r = pt("front", FRONT, (-(LENS_CENTER_X - LENS_W / 2), 0, 22))
-    body.append(_dim(bridge_l, bridge_r, -16, f"{2 * (LENS_CENTER_X - LENS_W / 2):.0f}"))
-    oc_l = pt("front", FRONT, (-IPD / 2, 0, -24))
-    oc_r = pt("front", FRONT, (IPD / 2, 0, -24))
-    body.append(_dim(oc_r, oc_l, 20, f"IPD {IPD:.0f} (optical centres)"))
-
-    s = fits["side"]
-    sx0, sy0 = s(b["side"][0], b["side"][1])
-    sx1, sy1 = s(b["side"][2], b["side"][3])
+    (sx0, _), (sx1, sy1) = corner("side", 0, 1), corner("side", 2, 3)
     body.append(_dim((sx0, sy1), (sx1, sy1), 46, f"{env.depth:.0f}"))
-    pod_a = pt("side", SIDE, (-FRAME_HALF_WIDTH, POD_Y[1], 22))
-    pod_b = pt("side", SIDE, (-FRAME_HALF_WIDTH, POD_Y[0], 22))
-    body.append(_dim(pod_a, pod_b, -16, f"pod {POD_Y[1] - POD_Y[0]:.0f}"))
-
-    t = fits["top"]
-    tx0, ty0 = t(b["top"][0], b["top"][1])
-    tx1, ty1 = t(b["top"][2], b["top"][3])
+    (_, ty0), (tx1, ty1) = corner("top", 0, 1), corner("top", 2, 3)
     body.append(_dim((tx1, ty0), (tx1, ty1), 34, f"{env.depth:.0f}", vertical=True))
+    for d in product.dims:
+        cam = cams[d.view]
+        pa, pb = cam.project(d.a), cam.project(d.b)
+        body.append(_dim(fits[d.view](pa[0], pa[1]), fits[d.view](pb[0], pb[1]), d.offset, d.label, d.vertical))
 
     for name, label in (("top", "TOP VIEW"), ("front", "FRONT VIEW"), ("side", "RIGHT-SIDE VIEW (wearer's left)")):
-        x0, y0 = fits[name](b[name][0], b[name][1])
+        x0, y0 = corner(name, 0, 1)
         body.append(text(x0, y0 - (44 if name != "top" else 14), label, 10.5, 700, MUTED,
                          extra='letter-spacing="1"'))
 
-    iso = collect_faces(worn, ISO, xray=True)
-    iso_fit = fit_box(faces_bounds(iso), (left + front_w + gap + 60, top_y + 190, 560, 300))
-    body.append(faces_svg(iso, iso_fit, 0.5))
-
-    notes = [
-        "NOTES",
-        "1. Third-angle projection. Dimensions in mm. Visor not shown.",
-        "2. Frame, brow bay, pods and arms: SLS PA12 nylon, 1.5 mm walls.",
-        f"3. Lens {LENS_W:.0f} mm, bridge {2 * (LENS_CENTER_X - LENS_W / 2):.0f} mm, "
-        f"optical centres at {IPD:.0f} mm IPD.",
-        "4. Temples flex ~5 deg outward when worn; model shows them parallel.",
-        "5. Source of truth: cad/spec.py (regenerate with python -m cad.generate).",
-    ]
-    nx, ny = left + front_w + gap + 40, top_y + 40
+    notes = ["NOTES", "1. Third-angle projection. Dimensions in mm.", *product.notes,
+             f"{len(product.notes) + 2}. Source of truth: cad/products/{product.key}.py "
+             "(regenerate with python -m cad.generate)."]
+    nx, ny = side_x, top_y + 40
     for i, line in enumerate(notes):
         body.append(text(nx, ny + i * 22, line, 12 if i else 10.5, 700 if i == 0 else 400,
                          MUTED if i == 0 else INK, extra='letter-spacing="1"' if i == 0 else ""))
-    return sheet(width, height, "HOLOGRAM VR CAM - ORTHOGRAPHIC VIEWS",
-                 "Overall dimensions and key optical spacing", "3 / 4", "\n".join(body))
+
+    iso_top = ny + len(notes) * 22 + 20
+    iso_box = (side_x + 20, iso_top, width - side_x - 80, front_y - 60 - iso_top)
+    if iso_box[3] > 120:
+        iso = collect_faces(worn, Camera(product.iso), xray=True)
+        body.append(faces_svg(iso, fit_box(faces_bounds(iso), iso_box), 0.5))
+    return sheet(product, width, height, f"{product.title} - ORTHOGRAPHIC VIEWS",
+                 "Overall dimensions and key spacing", "3 / 4", "\n".join(body))
 
 
-__all__ = ["Camera", "collect_faces", "draw_assembly", "draw_exploded", "draw_orthographic"]
+__all__ = ["Camera", "collect_faces", "draw_assembly", "draw_exploded", "draw_orthographic", "sheet", "text"]

@@ -11,3 +11,6 @@ dist/
 # media captured while testing on a desktop
 hologram_frame.png
 DCIM/
+
+# PlatformIO build output
+firmware/glasses/.pio/

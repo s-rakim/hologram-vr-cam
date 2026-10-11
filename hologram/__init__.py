@@ -1,9 +1,8 @@
-"""Hologram VR Cam: firmware for DIY VR display glasses with a POV camera.
+"""Hologram: software for the Hologram VR helmet (Raspberry Pi 5).
 
-Runs on a Raspberry Pi Zero 2 W inside the right temple. It records
-Ray-Ban-style point-of-view photos and video (with a privacy LED that is
-always lit while recording) and drives two micro-OLED displays with a
-head-tracked, side-by-side stereo image.
+The Hologram Cam glasses run their own firmware (firmware/glasses, ESP32-S3);
+this package is the helmet's head tracking, wide-angle reflector rendering,
+head-tracked ear-cup audio and controls.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

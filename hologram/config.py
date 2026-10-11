@@ -1,62 +1,18 @@
-"""Configuration: dataclass defaults, optionally overridden by a TOML file.
+"""Configuration pieces that are not specific to one device, and the TOML loader.
 
-The default pin numbers match the wiring in cad/spec.py (a test enforces it).
+The VR helmet's top-level config lives in ``hologram.vr.config``; this module
+holds the generic parts and the strict loader that applies a TOML file on
+top of the defaults (unknown keys and wrong types are errors, so a typo in
+the file can't silently do nothing).
 """
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass, field, fields, is_dataclass, replace
+from dataclasses import dataclass, fields, is_dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-
-@dataclass(frozen=True)
-class PinConfig:
-    """BCM GPIO numbers."""
-
-    capture_button: int = 17      # active low, internal pull-up
-    touch: int = 27               # TTP223 output, active high
-    privacy_led: int = 22         # 2N7002 gate
-    low_battery: int = 23         # PowerBoost LBO through a Schottky, active low
-    imu_interrupt: int = 4
-
-
-@dataclass(frozen=True)
-class CaptureConfig:
-    media_dir: str = "~/DCIM/Hologram"
-    video_size: tuple[int, int] = (1920, 1080)
-    framerate: int = 30
-    bitrate: int = 10_000_000
-    max_clip_seconds: float = 60.0    # Ray-Ban Meta style default; raise to 180 if you like
-    record_audio: bool = True
-    audio_device: str = "plughw:CARD=sndrpigooglevoi"   # ALSA capture device; list with: arecord -L
-    min_free_mb: int = 500
-
-
-@dataclass(frozen=True)
-class DisplayConfig:
-    enabled: bool = True
-    size: tuple[int, int] = (1920, 1080)   # full side-by-side frame sent over HDMI
-    render_scale: float = 0.5              # render at half resolution, scale up on output
-    fps: int = 30
-    eye_fov_deg: float = 45.0              # horizontal field of view of one eye
-    k1: float = 0.0                        # radial pre-distortion; birdbath optics need ~0
-    k2: float = 0.0
-    lens_center_shift: float = 0.0         # +ve moves each lens centre towards the nose
-    passthrough_zoom: float = 1.0
-    start_mode: str = "panorama"           # panorama | passthrough | off
-    panorama: str = ""                     # equirectangular image; empty = built-in grid world
-
-
-@dataclass(frozen=True)
-class TrackingConfig:
-    enabled: bool = True
-    i2c_bus: int = 1
-    address: int = 0x68
-    rate_hz: float = 200.0
-    beta: float = 0.05                     # Madgwick gain: higher trusts the accelerometer more
-    calibration_samples: int = 200
-    axis_map: tuple[str, str, str] = ("x", "y", "z")   # device x/y/z from sensor axes, e.g. ("-y", "x", "z")
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -68,17 +24,12 @@ class ThermalConfig:
 
 @dataclass(frozen=True)
 class PowerConfig:
+    fuel_gauge: bool = True              # MAX17048/MAX17043 on the UPS board (I2C)
+    i2c_bus: int = 1
+    fuel_gauge_address: int = 0x36
+    warn_percent: float = 10.0           # warning sound
+    shutdown_percent: float = 3.0        # save, then power off
     shutdown_on_low_battery: bool = True
-
-
-@dataclass(frozen=True)
-class Config:
-    pins: PinConfig = field(default_factory=PinConfig)
-    capture: CaptureConfig = field(default_factory=CaptureConfig)
-    display: DisplayConfig = field(default_factory=DisplayConfig)
-    tracking: TrackingConfig = field(default_factory=TrackingConfig)
-    thermal: ThermalConfig = field(default_factory=ThermalConfig)
-    power: PowerConfig = field(default_factory=PowerConfig)
 
 
 def _merge(obj: Any, data: dict[str, Any], where: str) -> Any:
@@ -111,16 +62,14 @@ def _merge(obj: Any, data: dict[str, Any], where: str) -> Any:
     return replace(obj, **changes)
 
 
-def load_config(path: str | Path | None = None) -> Config:
-    """Defaults, overridden by the TOML file at ``path`` if given."""
-    cfg = Config()
+def load_toml(defaults: T, path: str | Path | None) -> T:
+    """``defaults`` overridden by the TOML file at ``path`` (unknown keys are errors)."""
     if path is None:
-        return cfg
+        return defaults
     with open(path, "rb") as fh:
         data = tomllib.load(fh)
-    cfg = _merge(cfg, data, "")
-    if cfg.display.start_mode not in ("panorama", "passthrough", "off"):
-        raise ValueError("display.start_mode must be panorama, passthrough or off")
-    if cfg.thermal.resume_c >= cfg.thermal.stop_recording_c:
+    cfg = _merge(defaults, data, "")
+    thermal = getattr(cfg, "thermal", None)
+    if thermal is not None and thermal.resume_c >= thermal.stop_recording_c:
         raise ValueError("thermal.resume_c must be below thermal.stop_recording_c")
     return cfg

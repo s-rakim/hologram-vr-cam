@@ -1,0 +1,9 @@
+{
+  "name": "Hologram Cam",
+  "short_name": "Hologram",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#0f1420",
+  "theme_color": "#0f1420",
+  "icons": []
+}

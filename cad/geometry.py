@@ -118,6 +118,54 @@ def poly(*points: Vec2) -> Loop:
     return tuple(dedupe(list(points)))
 
 
+def ellipse_arc(cx: float, cy: float, rx: float, ry: float, a0: float, a1: float,
+                min_edge: float = MIN_EDGE_MM, max_segments: int = 48) -> list[Vec2]:
+    """Points along an elliptical arc (inclusive of both ends)."""
+    sweep = a1 - a0
+    n = max(1, min(max_segments, int(abs(sweep) * max(rx, ry) / (2 * min_edge))))
+
+    def pt(i: int) -> Vec2:
+        a = a0 + sweep * i / n
+        return (cx + rx * math.cos(a), cy + ry * math.sin(a))
+
+    pts = [pt(i) for i in range(n + 1)]
+    while n > 1 and min(math.dist(pts[i], pts[i + 1]) for i in range(n)) < min_edge:
+        n -= 1
+        pts = [pt(i) for i in range(n + 1)]
+    return pts
+
+
+def ellipse_band(cx: float, cy: float, rx_out: float, ry_out: float, rx_in: float, ry_in: float,
+                 a0: float, a1: float, max_segments: int = 48) -> Loop:
+    """Closed outline of an elliptical ring sector between angles a0..a1 (radians)."""
+    outer = ellipse_arc(cx, cy, rx_out, ry_out, a0, a1, max_segments=max_segments)
+    inner = ellipse_arc(cx, cy, rx_in, ry_in, a1, a0, max_segments=max_segments)
+    return tuple(dedupe(outer + inner))
+
+
+def offset_convex(loop: Loop, d: float) -> Loop:
+    """Shrink a convex counter-clockwise polygon by ``d`` (grow if negative)."""
+    n = len(loop)
+    lines = []
+    for i in range(n):
+        (x0, y0), (x1, y1) = loop[i], loop[(i + 1) % n]
+        ex, ey = x1 - x0, y1 - y0
+        length = math.hypot(ex, ey)
+        nx, ny = -ey / length, ex / length            # inward normal for CCW
+        lines.append(((x0 + nx * d, y0 + ny * d), (ex, ey)))
+    out = []
+    for i in range(n):
+        (px, py), (dx, dy) = lines[i - 1]
+        (qx, qy), (ex, ey) = lines[i]
+        den = dx * ey - dy * ex
+        if abs(den) < 1e-12:
+            out.append((qx, qy))
+            continue
+        t = ((qx - px) * ey - (qy - py) * ex) / den
+        out.append((px + dx * t, py + dy * t))
+    return tuple(out)
+
+
 def _ccw(loop: Loop) -> Loop:
     return loop if signed_area(loop) > 0 else tuple(reversed(loop))
 
