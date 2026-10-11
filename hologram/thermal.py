@@ -1,7 +1,7 @@
 """Thermal guard: the electronics sit against the wearer's head.
 
-Video encoding is the hottest thing the Pi does, so recording stops when the
-SoC passes ``stop_c`` and is refused until it cools below ``resume_c``.
+When the SoC passes ``stop_c`` the helmet halves its frame rate (rendering is
+the hottest thing it does) until it cools below ``resume_c``.
 """
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class ThermalGuard:
         self.last_c: float | None = None
 
     def update(self) -> bool:
-        """Re-read the sensor; returns True while too hot to record."""
+        """Re-read the sensor; returns True while too hot (throttle)."""
         t = self._read()
         self.last_c = t
         if t is None:

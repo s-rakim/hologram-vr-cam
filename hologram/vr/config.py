@@ -68,7 +68,7 @@ class PassthroughConfig:
 @dataclass(frozen=True)
 class SoundConfig:
     enabled: bool = True
-    device: str = "default"       # ALSA playback device; list with: aplay -L
+    device: str = "plughw:CARD=sndrpihifiberry,DEV=0"   # the I2S amps (hifiberry-dac overlay); list: aplay -L
     volume: float = 0.35
     volume_step: float = 0.05
     ear_pattern: float = 0.5      # virtual ear microphones: 1 = omni, 0.5 = cardioid, 0 = figure-of-eight

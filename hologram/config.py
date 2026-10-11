@@ -18,8 +18,8 @@ T = TypeVar("T")
 @dataclass(frozen=True)
 class ThermalConfig:
     sensor_path: str = "/sys/class/thermal/thermal_zone0/temp"
-    stop_recording_c: float = 80.0
-    resume_c: float = 70.0
+    throttle_c: float = 80.0             # halve the frame rate above this SoC temperature ...
+    resume_c: float = 70.0               # ... until it cools below this
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class PowerConfig:
     fuel_gauge: bool = True              # MAX17048/MAX17043 on the UPS board (I2C)
     i2c_bus: int = 1
     fuel_gauge_address: int = 0x36
-    warn_percent: float = 10.0           # warning sound
+    warn_percent: float = 10.0           # one warning sound
     shutdown_percent: float = 3.0        # save, then power off
     shutdown_on_low_battery: bool = True
 
@@ -70,6 +70,6 @@ def load_toml(defaults: T, path: str | Path | None) -> T:
         data = tomllib.load(fh)
     cfg = _merge(defaults, data, "")
     thermal = getattr(cfg, "thermal", None)
-    if thermal is not None and thermal.resume_c >= thermal.stop_recording_c:
-        raise ValueError("thermal.resume_c must be below thermal.stop_recording_c")
+    if thermal is not None and thermal.resume_c >= thermal.throttle_c:
+        raise ValueError("thermal.resume_c must be below thermal.throttle_c")
     return cfg

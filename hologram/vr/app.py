@@ -76,7 +76,7 @@ class VrApp:
         self.clock = clock
         self.shutdown = shutdown
         self.tracker = HeadTracker(cfg.tracking.beta)
-        self.thermal = ThermalGuard(hw.read_temperature, cfg.thermal.stop_recording_c, cfg.thermal.resume_c)
+        self.thermal = ThermalGuard(hw.read_temperature, cfg.thermal.throttle_c, cfg.thermal.resume_c)
         self.audio = AudioEngine(hw.audio_sink, self.head_rotation, volume=cfg.sound.volume,
                                  pattern=cfg.sound.ear_pattern, enabled=cfg.sound.enabled)
         self.buttons = {"mode": GestureDetector(hold_s=2.0), "action": GestureDetector(hold_s=0.6),
@@ -93,6 +93,7 @@ class VrApp:
         self.poweroff_requested = False
         self.asleep = False
         self.battery_percent: float | None = None
+        self._battery_warned = False
         self._next_battery_check = 0.0
         self._panoramas = list_images(cfg.media.panoramas)
         self._photos = list_images(cfg.media.photos)
@@ -205,6 +206,10 @@ class VrApp:
             self.history.append(("low_battery", self.battery_percent))
             self.poweroff_requested = self.shutdown is not None
             self.running = False
+        elif self.battery_percent <= self.cfg.power.warn_percent and not self._battery_warned:
+            self._battery_warned = True
+            self.audio.play("battery_low")
+            self.history.append(("battery_warning", self.battery_percent))
 
     def step(self) -> None:
         for name, pressed in self.hw.display.poll_keys():

@@ -1,5 +1,5 @@
 [Unit]
-Description=Hologram VR Cam glasses
+Description=Hologram VR helmet
 After=multi-user.target sound.target
 
 [Service]
@@ -8,7 +8,7 @@ User=@USER@
 WorkingDirectory=@REPO@
 Environment=PYTHONUNBUFFERED=1
 Environment=SDL_VIDEODRIVER=kmsdrm
-ExecStart=/usr/bin/python3 -m hologram run --config @REPO@/config/hologram.toml
+ExecStart=/usr/bin/python3 -m hologram.vr run --config /etc/hologram/vr.toml
 Restart=on-failure
 RestartSec=2
 SupplementaryGroups=video render input gpio i2c audio

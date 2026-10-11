@@ -2,7 +2,7 @@
 
 Gives 3DoF head orientation. Pitch and roll are anchored by gravity; yaw has
 no magnetometer reference and drifts slowly, so the wearer recentres it
-with a double tap (see :meth:`HeadTracker.recenter`).
+by holding the action button (see :meth:`HeadTracker.recenter`).
 """
 from __future__ import annotations
 
@@ -62,7 +62,7 @@ class HeadTracker:
         self._last_t: float | None = None
 
     def calibrate(self, samples: list[tuple[qt.Vec, qt.Vec]]) -> qt.Vec:
-        """Average gyro readings taken while the glasses sit still."""
+        """Average gyro readings taken while the helmet sits still."""
         if samples:
             n = len(samples)
             self.gyro_bias = tuple(sum(g[i] for g, _ in samples) / n for i in range(3))  # type: ignore[assignment]
