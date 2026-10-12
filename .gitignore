@@ -11,3 +11,6 @@ dist/
 # media captured while testing on a desktop
 hologram_frame.png
 DCIM/
+
+# Hologram Maker output folders used in the docs examples
+/out/
