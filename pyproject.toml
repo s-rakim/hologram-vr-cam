@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hologram-vr-cam"
 version = "0.1.0"
-description = "DIY VR display glasses with a Ray-Ban style POV camera (Raspberry Pi Zero 2 W)"
+description = "DIY VR display glasses with a Ray-Ban style POV camera, and a stereo-to-hologram maker"
 readme = "README.md"
-authors = [{ name = "Malcolm Opondo" }]
+authors = [{ name = "Malcolm Opondo", email = "153083325+s-rakim@users.noreply.github.com" }]
 requires-python = ">=3.11"
 dependencies = ["numpy>=1.24"]
 
@@ -19,9 +19,10 @@ dev = ["pytest>=7", "ifcopenshell>=0.8"]
 
 [project.scripts]
 hologram = "hologram.__main__:main"
+holomaker = "holomaker.__main__:main"
 
 [tool.setuptools]
-packages = ["hologram"]
+packages = ["hologram", "holomaker"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

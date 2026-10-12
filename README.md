@@ -4,12 +4,18 @@ DIY glasses that work as a **VR / AR headset** and a **Ray-Ban-style POV camera*
 temple to take a photo, hold it to record video with sound, and look through two 1080p micro-OLED displays at
 a head-tracked 360° scene or the live camera feed.
 
+The repo also has the **Hologram Maker** ([`holomaker/`](holomaker)): photograph something with two
+cameras and play it back as a hologram on a Pepper's-ghost pyramid, a Looking Glass light field display, a
+DIY volumetric display, or these glasses. See [docs/hologram-machine.md](docs/hologram-machine.md).
+
 This repo has everything needed to build them:
 
 - a **Revit model** (an IFC file Revit opens directly, plus a pyRevit script that builds a native family),
 - **drawings**: x-ray assembly, exploded view, orthographic views with dimensions, and the wiring schematic,
 - a **bill of materials**, pin-by-pin **wiring table** and step-by-step **build guide**,
-- the **software** that runs on the glasses (Python, Raspberry Pi Zero 2 W), with tests.
+- the **software** that runs on the glasses (Python, Raspberry Pi Zero 2 W), with tests,
+- the **Hologram Maker**, which turns stereo photos into point clouds, light field quilts, pyramid layouts and
+  volumetric slices.
 
 ![Assembly, x-ray isometric](docs/drawings/01_assembly.svg)
 
@@ -42,7 +48,11 @@ docs/
   drawings/             01 assembly, 02 exploded, 03 orthographic, 04 wiring (SVG)
   assembly.md           build guide
   bom.md, wiring.md     generated parts list and pin table
+  hologram-machine.md   the Hologram Maker: capture hardware, displays, usage
+  software.md           reference for every package, module, command and test
+  research/             3D capture / format / display research with sources
 hologram/               glasses software (capture, tracking, stereo renderer, app)
+holomaker/              Hologram Maker (stereo depth, point cloud, quilt, pyramid, slices)
 config/hologram.toml    every setting, with defaults
 deploy/                 Pi setup script and systemd service
 tests/                  pytest suite (software + CAD consistency + IFC validation)
@@ -171,3 +181,42 @@ to date.
 Start with **[docs/assembly.md](docs/assembly.md)**: printing and drilling, bench testing, frame, optics,
 temples, hinge harness, calibration. Parts are in **[docs/bom.md](docs/bom.md)** and every connection is in
 **[docs/wiring.md](docs/wiring.md)**.
+
+## The Hologram Maker
+
+```bash
+pip install -e .
+python -m holomaker demo --out out/demo                          # synthetic scene, end to end
+python -m holomaker stereo left.jpg right.jpg --baseline-mm 63 --out out/pair
+python -m holomaker capture --subject-depth 1.5 --out out/shot   # Raspberry Pi 5 with two cameras
+```
+
+One stereo pair (or a photo plus a depth map) becomes:
+
+| Output | For |
+|---|---|
+| `*.ply` coloured point cloud | Blender, MeshLab, CloudCompare, Unity, three.js |
+| `*_pyramid.png` four-sided layout | A clear Pepper's-ghost pyramid on a phone, tablet or monitor |
+| `*_qs8x6a1.33.png` quilt | Looking Glass light field displays |
+| `*_slices/` depth slices | Swept-volume volumetric displays |
+| `*_sbs.png`, `*_anaglyph.png` | These glasses, VR headsets, 3D TVs, red/cyan glasses |
+
+Hardware options, pyramid cutting dimensions and limits are in
+**[docs/hologram-machine.md](docs/hologram-machine.md)**. The research behind it, with sources, is in
+**[docs/research/3d-visual-output.md](docs/research/3d-visual-output.md)**.
+
+## Documentation
+
+| Document | Contents |
+|---|---|
+| [docs/assembly.md](docs/assembly.md) | Glasses build guide |
+| [docs/bom.md](docs/bom.md) | Glasses parts list (generated) |
+| [docs/wiring.md](docs/wiring.md) | Pin-by-pin wiring (generated) |
+| [docs/software.md](docs/software.md) | Every package, module, command, config section and test |
+| [docs/hologram-machine.md](docs/hologram-machine.md) | Hologram Maker hardware, displays and usage |
+| [docs/research/3d-visual-output.md](docs/research/3d-visual-output.md) | Research: capturing, storing and displaying 3D visual data |
+
+## Author
+
+Designed and built by **Malcolm Opondo** ([@s-rakim](https://github.com/s-rakim)), the sole author and
+contributor. See [AUTHORS.md](AUTHORS.md).
