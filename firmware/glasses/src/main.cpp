@@ -45,6 +45,7 @@ struct CommandText {
 };
 
 bool buttonDown = false, touchDown = false;
+bool ignoreButtonUntilRelease = false;   // the press that woke the glasses is not a gesture
 uint32_t buttonChangedAt = 0;
 uint32_t touchBaseline = 0;
 uint32_t lastStatusAt = 0, lastBatteryAt = 0;
@@ -118,11 +119,7 @@ void refused(hvr::Refusal r) {
 void takePhoto() {
   char path[48];
   const hvr::Refusal r = capture.takePhoto(millis(), epochNow(), nextSequence(), path, sizeof(path));
-  if (r != hvr::Refusal::None) return refused(r);
-  if (!capture.recording()) {                       // two quick LED flashes for a photo
-    digitalWrite(PIN_PRIVACY_LED, HIGH); delay(80); digitalWrite(PIN_PRIVACY_LED, LOW); delay(60);
-    digitalWrite(PIN_PRIVACY_LED, HIGH); delay(80); digitalWrite(PIN_PRIVACY_LED, LOW);
-  }
+  if (r != hvr::Refusal::None) return refused(r);      // the LED was lit while the photo was taken
   sounds::play(sounds::Sound::Photo);
   event("photo", path);
 }
@@ -132,12 +129,14 @@ void startRecording() {
   char path[48];
   const hvr::Refusal r = capture.startRecording(millis(), epochNow(), nextSequence(), path, sizeof(path));
   if (r != hvr::Refusal::None) return refused(r);
+  wifi_sync::setBusyFile(capture.currentPath());
   sounds::play(sounds::Sound::RecordStart);
   event("recording", path);
 }
 
 void stopRecording(hvr::StopReason why) {
   if (!capture.stopRecording(why)) return;
+  wifi_sync::setBusyFile("");
   sounds::play(why == hvr::StopReason::LowBattery ? sounds::Sound::BatteryLow : sounds::Sound::RecordStop);
   event("stopped", hvr::stopReasonName(why));
 }
@@ -233,7 +232,11 @@ void readInputs(uint32_t now) {
   if (b != buttonDown && now - buttonChangedAt > 20) {        // 20 ms debounce
     buttonDown = b;
     buttonChangedAt = now;
-    onButton(b ? button.press(now) : button.release(now));
+    if (ignoreButtonUntilRelease) {
+      if (!b) ignoreButtonUntilRelease = false;
+    } else {
+      onButton(b ? button.press(now) : button.release(now));
+    }
   }
   onButton(button.poll(now));
 
@@ -273,6 +276,10 @@ void setup() {
   Serial.begin(115200);
   setCpuFrequencyMhz(80);
   pinMode(PIN_BUTTON, INPUT_PULLUP);
+  if (digitalRead(PIN_BUTTON) == LOW) {            // still held from the wake-up press
+    buttonDown = true;
+    ignoreButtonUntilRelease = true;
+  }
   commands = xQueueCreate(8, sizeof(CommandText));
 
   prefs.begin("hvr", false);
@@ -301,12 +308,12 @@ void loop() {
   while (xQueueReceive(commands, &ct, 0) == pdTRUE) handle(hvr::parseCommand(ct.text, ct.len));
 
   if (capture.tick(now)) {
+    wifi_sync::setBusyFile(capture.recording() ? capture.currentPath() : "");
     if (capture.recording()) event("segment", capture.currentPath());
     else event("stopped", hvr::stopReasonName(capture.lastStop()));
   }
   recorder.tick(now);
   checkBattery(now);
-  wifi_sync::loop();
 
   if (ble_link::connected() && now - lastStatusAt > (capture.recording() ? 1000u : 3000u)) sendStatus();
   delay(10);

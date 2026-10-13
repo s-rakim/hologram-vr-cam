@@ -51,8 +51,8 @@ void mediaPath(char* out, size_t len, int64_t epoch, uint32_t sequence, const ch
     unsigned mo, d;
     civil(epoch / 86400, &y, &mo, &d);
     const unsigned secs = static_cast<unsigned>(epoch % 86400);
-    std::snprintf(stem, sizeof(stem), "HVR_%04d%02u%02u_%02u%02u%02u", y, mo, d, secs / 3600, (secs / 60) % 60,
-                  secs % 60);
+    std::snprintf(stem, sizeof(stem), "HVR_%04d%02u%02u_%02u%02u%02u_%04lu", y, mo, d, secs / 3600,
+                  (secs / 60) % 60, secs % 60, static_cast<unsigned long>(sequence % 10000));
   } else {
     std::snprintf(stem, sizeof(stem), "HVR_N%06lu", static_cast<unsigned long>(sequence));
   }
@@ -73,8 +73,11 @@ Refusal CaptureLogic::takePhoto(uint32_t now, int64_t epoch, uint32_t sequence, 
   (void)now;
   Refusal r = check();
   if (r != Refusal::None) return r;
+  if (!recording_ && !hw_.ledOn()) return Refusal::LedFault;   // lit while the picture is taken
   mediaPath(pathOut, len, epoch, sequence, "jpg", 1);
-  return hw_.savePhoto(pathOut, recording_) ? Refusal::None : Refusal::CameraError;
+  const bool ok = hw_.savePhoto(pathOut, recording_);
+  if (!recording_) hw_.ledOff();
+  return ok ? Refusal::None : Refusal::CameraError;
 }
 
 Refusal CaptureLogic::startRecording(uint32_t now, int64_t epoch, uint32_t sequence, char* pathOut, size_t len) {
@@ -114,7 +117,7 @@ bool CaptureLogic::tick(uint32_t now) {
   if (lowBattery_) return stopRecording(StopReason::LowBattery);
   if (hw_.tooHot()) return stopRecording(StopReason::TooHot);
   if (!hw_.hasSpace()) return stopRecording(StopReason::StorageFull);
-  if (now - segmentAt_ >= segmentMs_) {                // roll over; the LED stays on
+  if (now - segmentAt_ >= segmentMs_ || hw_.segmentFull()) {   // roll over; the LED stays on
     hw_.closeSegment();
     ++part_;
     mediaPath(path_, sizeof(path_), epoch_, sequence_, "avi", part_);

@@ -8,14 +8,19 @@ handy for testing). The source of truth is `firmware/glasses/lib/core/src/protoc
 | Characteristic | UUID | Properties |
 |---|---|---|
 | Service | `7a1e0001-5c3b-4d8e-9f21-0c4a6b8d2e10` | |
-| Command | `7a1e0002-5c3b-4d8e-9f21-0c4a6b8d2e10` | write (encrypted) |
-| Status | `7a1e0003-5c3b-4d8e-9f21-0c4a6b8d2e10` | read + notify (encrypted): JSON, every 1 s while recording, every 3 s otherwise |
-| Event | `7a1e0004-5c3b-4d8e-9f21-0c4a6b8d2e10` | notify (encrypted): JSON, when something happens |
+| Command | `7a1e0002-5c3b-4d8e-9f21-0c4a6b8d2e10` | write (encrypted + authenticated) |
+| Status | `7a1e0003-5c3b-4d8e-9f21-0c4a6b8d2e10` | read + notify (encrypted + authenticated): JSON, every 1 s while recording, every 3 s otherwise |
+| Event | `7a1e0004-5c3b-4d8e-9f21-0c4a6b8d2e10` | read + notify (encrypted + authenticated): JSON, when something happens |
 
-**Security:** characteristics need an encrypted, authenticated link: LE Secure Connections with bonding and MITM
-protection. The glasses show no screen, so they use a fixed 6-digit passkey (`BLE_PASSKEY` in
-`firmware/glasses/include/config.h`); change it before you flash. The MTU is negotiated up to 517 bytes so a status
-fits in one notification.
+**Security:** all three characteristics need an encrypted, *authenticated* link: LE Secure Connections with bonding
+and MITM protection. The glasses show no screen, so they use a fixed 6-digit passkey (`BLE_PASSKEY` in
+`firmware/glasses/include/config.h`); change it before you flash. A central that pairs without the passkey ("Just
+Works") is disconnected as soon as pairing completes, so it never sees the status, which carries the Wi-Fi sync
+password while sync is on.
+
+**MTU:** the phone picks the MTU (the glasses offer up to 517 bytes). A status is 200-300 bytes, so on a link with a
+small MTU a notification arrives cut short. The app then reads the characteristic, which always returns the whole
+value. It runs every Bluetooth operation through one queue, because Android allows only one at a time.
 
 ## Commands
 
@@ -28,10 +33,10 @@ UTF-8 text written to the command characteristic:
 | `wifi on` / `wifi off` | Wi-Fi sync hotspot + web page |
 | `find` | Play a loud beep pattern |
 | `off` | Power off (deep sleep; the capture button wakes it) |
-| `time <unix seconds>` | Set the clock, used for file names. The app sends it on connect |
+| `time <seconds>` | Set the clock, used only for file names. The app sends the phone's *local* wall-clock time on connect (Unix seconds plus the time-zone offset), so names match the time on your phone |
 | `set res <vga\|svga\|hd\|uxga>` | 640x480, 800x600, 1280x720 (`hd`, also accepts `720p`), 1600x1200 |
 | `set quality <4-63>` | JPEG quality, lower = better and bigger |
-| `set segment <30-1800>` | Seconds per video file |
+| `set segment <30-1800>` | Seconds per video file. A file also ends early when its index fills (about 8000 frames, ~11 min at 12 fps), and recording carries on in the next file |
 | `set maxrec <0-86400>` | Stop recording after this many seconds; 0 = no limit |
 | `status` | Send a status notification now |
 

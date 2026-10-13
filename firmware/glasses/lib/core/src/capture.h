@@ -1,7 +1,7 @@
 // Capture rules for the glasses, independent of the camera driver (host-testable).
 //
-//  * The privacy LED goes on BEFORE recording starts and recording is refused if
-//    it cannot; it goes off only after the last file is closed.
+//  * The privacy LED goes on BEFORE a photo or recording starts and the capture is
+//    refused if it cannot; it goes off only after the file is closed.
 //  * Long recordings continue in back-to-back segment files (FAT32 has a 4 GB
 //    file limit and a short file loses less if the battery dies).
 //  * Low battery, heat and a full card refuse new captures and stop recordings.
@@ -21,6 +21,7 @@ class CaptureHardware {
   virtual bool savePhoto(const char* path, bool whileRecording) = 0;
   virtual bool hasSpace() = 0;
   virtual bool tooHot() = 0;
+  virtual bool segmentFull() { return false; }    // the file's index is nearly full: roll over now
 };
 
 enum class Refusal : uint8_t { None, LowBattery, TooHot, StorageFull, LedFault, CameraError };
@@ -29,8 +30,9 @@ enum class StopReason : uint8_t { User, MaxLength, LowBattery, TooHot, StorageFu
 const char* refusalName(Refusal r);
 const char* stopReasonName(StopReason r);
 
-// File names: /DCIM/HVR_20261008_153012.avi, _p02, _p03 ... for later segments.
-// When the clock has not been set from the phone, a boot sequence number is used instead.
+// File names: /DCIM/HVR_20261008_153012_0042.avi (local time from the phone + a running
+// number, so two captures in the same second never collide), then _p02, _p03 ... for later
+// segments. When the clock has not been set, only the running number is used: HVR_N000042.
 void mediaPath(char* out, size_t len, int64_t epochSeconds, uint32_t sequence, const char* ext, int part);
 
 class CaptureLogic {

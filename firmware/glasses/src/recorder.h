@@ -18,6 +18,7 @@ class Recorder : public hvr::CaptureHardware {
   bool savePhoto(const char* path, bool whileRecording) override;
   bool hasSpace() override;
   bool tooHot() override;
+  bool segmentFull() override;
 
   void setVideo(hvr::Resolution res, int quality) { res_ = res; quality_ = quality; }
   void tick(uint32_t now);                    // camera idle power-off, free-space cache

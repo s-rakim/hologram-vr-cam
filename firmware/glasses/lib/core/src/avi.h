@@ -40,8 +40,10 @@ class AviWriter {
   uint32_t frames() const { return frames_; }
   uint32_t audioSamples() const { return audioBytes_ / 2; }
   uint32_t bytesWritten() { return sink_.position(); }
-  // True when the index is nearly full: start a new segment.
+  // True when the index has no room for another frame + audio chunk.
   bool full() const { return entries_ + 2 >= capacity_; }
+  // True when fewer than `margin` index entries are left: time to start a new segment.
+  bool nearlyFull(size_t margin) const { return entries_ + margin >= capacity_; }
 
  private:
   bool chunk(uint32_t fourcc, const uint8_t* data, size_t len);

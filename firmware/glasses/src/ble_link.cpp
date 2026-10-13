@@ -18,6 +18,14 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     server->updateConnParams(desc->conn_handle, 80, 160, 0, 400);
   }
   void onDisconnect(NimBLEServer*) override { NimBLEDevice::startAdvertising(); }
+  // NimBLE falls back to Just Works pairing for a central with no keyboard, which
+  // encrypts without proving the passkey. Such a link must not see the status (it
+  // carries the Wi-Fi sync password), so drop it.
+  void onAuthenticationComplete(ble_gap_conn_desc* desc) override {
+    if (!desc->sec_state.encrypted || !desc->sec_state.authenticated) {
+      NimBLEDevice::getServer()->disconnect(desc->conn_handle);
+    }
+  }
 };
 
 class CommandCallbacks : public NimBLECharacteristicCallbacks {
@@ -35,7 +43,7 @@ void begin(const char* name, unsigned passkey, CommandHandler onCommand) {
   g_handler = onCommand;
   NimBLEDevice::init(name);
   NimBLEDevice::setPower(ESP_PWR_LVL_P3);
-  NimBLEDevice::setMTU(517);                                 // status JSON fits one notification
+  NimBLEDevice::setMTU(517);                                 // the phone picks the MTU; offer the largest
   NimBLEDevice::setSecurityAuth(true, true, true);           // bond, MITM protection, LE secure connections
   NimBLEDevice::setSecurityPasskey(passkey);
   NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);    // the phone types the passkey in
@@ -47,9 +55,11 @@ void begin(const char* name, unsigned passkey, CommandHandler onCommand) {
       BLE_COMMAND_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::WRITE_AUTHEN);
   cmd->setCallbacks(&g_commandCallbacks);
   g_status = svc->createCharacteristic(
-      BLE_STATUS_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::NOTIFY);
-  g_event = svc->createCharacteristic(BLE_EVENT_UUID, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_ENC |
-                                                          NIMBLE_PROPERTY::NOTIFY);
+      BLE_STATUS_UUID,
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::READ_AUTHEN | NIMBLE_PROPERTY::NOTIFY);
+  g_event = svc->createCharacteristic(
+      BLE_EVENT_UUID,
+      NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::READ_ENC | NIMBLE_PROPERTY::READ_AUTHEN | NIMBLE_PROPERTY::NOTIFY);
   svc->start();
 
   NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();

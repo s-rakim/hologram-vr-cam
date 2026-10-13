@@ -11,7 +11,8 @@
 
 namespace {
 constexpr i2s_port_t kMicPort = I2S_NUM_0;   // PDM RX is only available on I2S0
-constexpr size_t kIndexEntries = 16000;       // > 5 min at 25 fps video + audio chunks
+constexpr size_t kIndexEntries = 16000;       // ~8000 frames; segments roll over before it fills
+constexpr size_t kIndexMargin = 256;          // ~10 s of frames + audio at 12 fps
 constexpr size_t kAudioChunk = 2048;          // samples read per video frame at most
 
 uint32_t countFiles(const char* ext) {
@@ -74,7 +75,9 @@ bool Recorder::begin() {
   i2s_set_pin(kMicPort, &pins);
   i2s_stop(kMicPort);
 
-  xTaskCreatePinnedToCore(taskEntry, "recorder", 6144, this, 2, nullptr, 1);
+  // Same priority as Arduino's loop task on the same core, so the two share it even
+  // when the SD card can't keep up with the camera.
+  xTaskCreatePinnedToCore(taskEntry, "recorder", 6144, this, 1, nullptr, 1);
   return cardOk_ && index_ && audioBuf_;
 }
 
@@ -147,8 +150,11 @@ void Recorder::taskLoop() {
     }
     xSemaphoreGive(lock_);
     camera_hw::release(fb);
+    vTaskDelay(1);                            // let loop() run (buttons, BLE, safety checks)
   }
 }
+
+bool Recorder::segmentFull() { return active_ && writer_->nearlyFull(kIndexMargin); }
 
 bool Recorder::savePhoto(const char* path, bool whileRecording) {
   if (!cardOk_) return false;

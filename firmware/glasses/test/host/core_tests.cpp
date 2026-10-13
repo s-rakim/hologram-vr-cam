@@ -102,9 +102,9 @@ static void test_protocol() {
 
 // ---------------------------------------------------------------- capture rules
 struct FakeHw : CaptureHardware {
-  bool led = false, ledBroken = false, space = true, hot = false;
+  bool led = false, ledBroken = false, space = true, hot = false, indexFull = false;
   int opened = 0, closed = 0, photos = 0;
-  bool openWhileLedOff = false;
+  bool openWhileLedOff = false, photoWhileLedOff = false;
   std::vector<std::string> files;
   bool ledOn() override { if (ledBroken) return false; led = true; return true; }
   void ledOff() override { led = false; }
@@ -115,15 +115,23 @@ struct FakeHw : CaptureHardware {
     return true;
   }
   void closeSegment() override { ++closed; }
-  bool savePhoto(const char* path, bool) override { ++photos; files.push_back(path); return true; }
+  bool savePhoto(const char* path, bool) override {
+    if (!led) photoWhileLedOff = true;
+    ++photos;
+    files.push_back(path);
+    return true;
+  }
   bool hasSpace() override { return space; }
   bool tooHot() override { return hot; }
+  bool segmentFull() override { return indexFull; }
 };
 
 static void test_capture() {
   char path[64];
   CHECK(std::string((mediaPath(path, sizeof(path), 1790000000, 7, "avi", 1), path)) ==
-        "/DCIM/HVR_20260921_141320.avi");
+        "/DCIM/HVR_20260921_141320_0007.avi");
+  mediaPath(path, sizeof(path), 1790000000, 8, "jpg", 1);       // same second, different file
+  CHECK(std::string(path) == "/DCIM/HVR_20260921_141320_0008.jpg");
   mediaPath(path, sizeof(path), 0, 7, "avi", 3);
   CHECK(std::string(path) == "/DCIM/HVR_N000007_p03.avi");
 
@@ -135,8 +143,14 @@ static void test_capture() {
   CHECK(!cap.tick(1000 + 299000));
   CHECK(cap.tick(1000 + 300000));                // new segment, LED still on
   CHECK(hw.led && hw.opened == 2 && hw.closed == 1 && cap.segment() == 2);
-  CHECK(hw.files.back() == "/DCIM/HVR_20260921_141320_p02.avi");
-  CHECK(cap.stopRecording(StopReason::User) && !hw.led && hw.closed == 2);
+  CHECK(hw.files.back() == "/DCIM/HVR_20260921_141320_0001_p02.avi");
+  hw.indexFull = true;                           // a long segment filled the AVI index early
+  CHECK(cap.tick(1000 + 300500) && cap.segment() == 3 && hw.opened == 3);
+  hw.indexFull = false;
+  CHECK(cap.stopRecording(StopReason::User) && !hw.led && hw.closed == 3);
+
+  CHECK(cap.takePhoto(0, 0, 9, path, sizeof(path)) == Refusal::None);   // LED lit for the photo, then off
+  CHECK(hw.photos == 1 && !hw.photoWhileLedOff && !hw.led);
 
   hw.hot = true;
   CHECK(cap.startRecording(0, 0, 2, path, sizeof(path)) == Refusal::TooHot);
@@ -150,6 +164,7 @@ static void test_capture() {
   CaptureLogic cap2(broken);
   CHECK(cap2.startRecording(0, 0, 1, path, sizeof(path)) == Refusal::LedFault);
   CHECK(!cap2.recording() && broken.opened == 0);
+  CHECK(cap2.takePhoto(0, 0, 2, path, sizeof(path)) == Refusal::LedFault && broken.photos == 0);
 
   CHECK(cap.startRecording(0, 0, 4, path, sizeof(path)) == Refusal::None);
   cap.setLowBattery(true);

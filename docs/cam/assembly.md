@@ -14,8 +14,8 @@ Ray-Ban-style camera glasses around a Seeed Studio XIAO ESP32-S3 Sense. Keep the
 > **Safety and privacy.** LiPo cells can catch fire if punctured, shorted or over-discharged. Use a cell with a
 > protection PCB, never pierce it, and keep it away from the soldering iron. The firmware stops recording above
 > 75 °C chip temperature because the board sits next to your head; don't raise that. Recording people without their
-> knowledge is illegal in many places. The privacy LED lights for every recording and the firmware refuses to record
-> if it can't switch it on, so keep it visible.
+> knowledge is illegal in many places. The privacy LED lights while every photo is taken and for the whole of every
+> recording, and the firmware refuses to capture if it can't switch it on, so keep it visible.
 
 ## 0. Tools and parts
 
@@ -122,7 +122,8 @@ The app is the single page `phone/index.html`. Web Bluetooth only works over **h
    Bluetooth). *Add to home screen* makes it look like an app.
 3. Tap **Connect**, pick *Hologram Cam*, and enter your passkey when asked. The phone remembers the pairing.
 
-The app sets the glasses' clock on connect, so file names get the real date (`HVR_20261011_143012.avi`).
+The app sets the glasses' clock on connect, so file names carry your phone's local date and time plus a running
+number (`HVR_20261011_143012_0042.avi`; later parts of a long recording add `_p02`, `_p03` ...).
 
 ## 8. Getting your files
 
@@ -133,18 +134,23 @@ The app sets the glasses' clock on connect, so file names get the real date (`HV
 - **On the VR helmet:** copy photos to `~/DCIM/Hologram` on the helmet's Pi and view them in gallery mode on a big
   virtual screen.
 
+The file being recorded right now can't be downloaded or deleted until the recording moves on to its next part or
+stops. The page runs in its own task, so a long download never blocks the button, the phone app or the battery and
+heat checks.
+
 **Firmware updates** go through the same Wi-Fi page: build with `pio run` and upload
-`firmware/glasses/.pio/build/xiao_esp32s3/firmware.bin` under *Firmware update*.
+`firmware/glasses/.pio/build/xiao_esp32s3/firmware.bin` under *Firmware update*. The glasses refuse an update while
+they are recording; stop the recording first.
 
 ## 9. Everyday use
 
 | Control | Action |
 |---|---|
-| Capture button: tap | Photo, or stop recording |
+| Capture button: tap | Photo (the LED lights while it's taken), or stop recording |
 | Capture button: hold 0.6 s | Start recording (the LED lights first) |
 | Touch pad: tap | Battery level: 1-4 beeps |
 | Touch pad: double tap | Wi-Fi sync on/off |
-| Touch pad: hold 3 s | Power off (deep sleep). The capture button wakes it |
+| Touch pad: hold 3 s | Power off (deep sleep). The capture button wakes it; that wake-up press doesn't take a photo |
 | Slide switch | Hard off for storage or travel |
 
 From the phone you can also change the resolution (VGA to 1600 x 1200), JPEG quality, segment length and an optional

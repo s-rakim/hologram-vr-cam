@@ -9,6 +9,7 @@ namespace camera_hw {
 namespace {
 bool g_running = false;
 hvr::Resolution g_res = hvr::Resolution::HD;
+int g_quality = -1;
 
 framesize_t frameSize(hvr::Resolution r) {
   switch (r) {
@@ -24,11 +25,13 @@ framesize_t frameSize(hvr::Resolution r) {
 bool start(hvr::Resolution res, int quality) {
   if (g_running) {
     sensor_t* s = esp_camera_sensor_get();
-    if (res != g_res && s) {
-      s->set_framesize(s, frameSize(res));
-      g_res = res;
-    }
-    if (s) s->set_quality(s, quality);
+    if (!s) return false;
+    const bool changed = res != g_res || quality != g_quality;
+    if (res != g_res) s->set_framesize(s, frameSize(res));
+    if (quality != g_quality) s->set_quality(s, quality);
+    g_res = res;
+    g_quality = quality;
+    if (changed) settle(2);             // buffered frames still have the old size / quality
     return true;
   }
   camera_config_t c = {};
@@ -64,6 +67,7 @@ bool start(hvr::Resolution res, int quality) {
     s->set_quality(s, quality);
   }
   g_res = res;
+  g_quality = quality;
   g_running = true;
   return true;
 }

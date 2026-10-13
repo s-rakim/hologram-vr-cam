@@ -31,7 +31,7 @@ phone over Bluetooth.
 |---|---|
 | **Video** | Up to 1280 x 720 MJPEG with 16 kHz mono sound, saved as AVI files on the microSD card. Long recordings roll over into a new file every 5 minutes (adjustable), so there is no 4 GB FAT32 limit and a crash loses at most one segment. Recording runs until you stop it (or set a maximum), the card fills, the battery runs low, or the chip gets too hot |
 | **Photos** | Up to 1600 x 1200 JPEG (2 MP with the stock OV2640; fit an OV5640 for 5 MP) |
-| **Privacy LED** | The firmware switches the front LED on *before* it opens a video file and refuses to record if it can't. Keep it visible |
+| **Privacy LED** | The firmware switches the front LED on *before* every photo and video and refuses to capture if it can't. Keep it visible |
 | **Phone app** | [`phone/index.html`](phone/index.html), a Web Bluetooth page: photo, record, live status (battery, recording time, card space left), settings, find-my-glasses beep, power off. Pairing needs a 6-digit passkey |
 | **Getting files off** | Double-tap the touch pad (or tap *Wi-Fi sync* in the app): the glasses start a Wi-Fi hotspot with a random password, and a web page there lists, downloads and deletes your files. Firmware updates go through the same page |
 

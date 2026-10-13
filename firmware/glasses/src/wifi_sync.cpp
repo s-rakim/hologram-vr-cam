@@ -1,6 +1,7 @@
 #include "wifi_sync.h"
 
 #include <SD.h>
+#include <cstring>
 #include <Update.h>
 #include <WebServer.h>
 #include <WiFi.h>
@@ -14,10 +15,31 @@ namespace wifi_sync {
 namespace {
 WebServer* g_server = nullptr;
 CommandHandler g_handler = nullptr;
-bool g_active = false;
+volatile bool g_active = false;
+volatile bool g_serving = false;
+TaskHandle_t g_task = nullptr;
+SemaphoreHandle_t g_taskDone = nullptr;
 char g_ssid[32] = {0};
 char g_pass[16] = {0};
 char g_ip[16] = {0};
+char g_busy[48] = {0};                 // basename of the file being recorded
+portMUX_TYPE g_busyMux = portMUX_INITIALIZER_UNLOCKED;
+enum class Ota : uint8_t { Idle, Writing, Refused, Failed };
+Ota g_ota = Ota::Idle;
+
+bool isBusy(const String& name) {
+  portENTER_CRITICAL(&g_busyMux);
+  const bool busy = g_busy[0] && name == g_busy;
+  portEXIT_CRITICAL(&g_busyMux);
+  return busy;
+}
+
+bool recording() {
+  portENTER_CRITICAL(&g_busyMux);
+  const bool r = g_busy[0] != '\0';
+  portEXIT_CRITICAL(&g_busyMux);
+  return r;
+}
 
 const char kPage[] PROGMEM = R"HTML(<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Hologram Cam</title>
@@ -31,11 +53,14 @@ li{margin:6px 0;list-style:none}a{color:#2f6fde}small{color:#5b6475}.del{backgro
 <input type="file" name="fw" accept=".bin"> <button>Upload</button></form>
 <script>
 function cmd(c){fetch('/api/cmd?c='+encodeURIComponent(c)).then(load)}
-function del(n){if(confirm('Delete '+n+'?'))fetch('/media/'+n,{method:'DELETE'}).then(load)}
+function del(n){if(confirm('Delete '+n+'?'))fetch('/media/'+encodeURIComponent(n),{method:'DELETE'})
+.then(r=>{if(!r.ok)r.text().then(alert)}).then(load)}
+function el(tag,text){const e=document.createElement(tag);if(text)e.textContent=text;return e}
 function load(){fetch('/api/files').then(r=>r.json()).then(fs=>{const ul=document.getElementById('files');
-ul.innerHTML=fs.length?'':'<li>No media yet.</li>';fs.sort((a,b)=>a.name<b.name?1:-1).forEach(f=>{const li=document.createElement('li');
-li.innerHTML='<a href="/media/'+f.name+'" download>'+f.name+'</a> <small>'+(f.size/1048576).toFixed(1)+' MB</small> '+
-'<button class="del" onclick="del(\''+f.name+'\')">x</button>';ul.appendChild(li)})})}
+ul.replaceChildren();if(!fs.length)ul.append(el('li','No media yet.'));
+fs.sort((a,b)=>a.name<b.name?1:-1).forEach(f=>{const li=el('li'),a=el('a',f.name),b=el('button','x');
+a.href='/media/'+encodeURIComponent(f.name);a.download=f.name;b.className='del';b.onclick=()=>del(f.name);
+li.append(a,' ',el('small',(f.size/1048576).toFixed(1)+' MB'),' ',b);ul.append(li)})})}
 load();setInterval(load,10000);
 </script></body></html>)HTML";
 
@@ -64,6 +89,7 @@ void handleFiles() {
 void handleDownload() {
   const String name = g_server->pathArg(0);
   if (!safeName(name)) return g_server->send(400, "text/plain", "bad name");
+  if (isBusy(name)) return g_server->send(409, "text/plain", "still recording this file");
   File f = SD.open("/DCIM/" + name);
   if (!f) return g_server->send(404, "text/plain", "not found");
   const char* type = name.endsWith(".jpg") ? "image/jpeg" : "video/x-msvideo";
@@ -74,6 +100,7 @@ void handleDownload() {
 void handleDelete() {
   const String name = g_server->pathArg(0);
   if (!safeName(name)) return g_server->send(400, "text/plain", "bad name");
+  if (isBusy(name)) return g_server->send(409, "text/plain", "still recording this file");
   g_server->send(SD.remove("/DCIM/" + name) ? 200 : 404, "text/plain", "ok");
 }
 
@@ -84,19 +111,45 @@ void handleCommand() {
 }
 
 void handleUpdateDone() {
-  const bool ok = !Update.hasError();
-  g_server->send(200, "text/plain", ok ? "Updated, restarting..." : "Update failed");
-  if (ok) {
-    delay(500);
-    ESP.restart();
-  }
+  const Ota result = g_ota;
+  g_ota = Ota::Idle;
+  if (result == Ota::Refused) return g_server->send(409, "text/plain", "Stop recording first");
+  const bool ok = result == Ota::Writing && !Update.hasError();
+  g_server->send(ok ? 200 : 500, "text/plain", ok ? "Updated, restarting..." : "Update failed");
+  if (!ok) return;
+  if (g_handler) g_handler("record stop", 11);   // finish any recording started meanwhile
+  vTaskDelay(pdMS_TO_TICKS(1500));
+  ESP.restart();
 }
 
 void handleUpdateChunk() {
   HTTPUpload& up = g_server->upload();
-  if (up.status == UPLOAD_FILE_START) Update.begin(UPDATE_SIZE_UNKNOWN);
-  else if (up.status == UPLOAD_FILE_WRITE) Update.write(up.buf, up.currentSize);
-  else if (up.status == UPLOAD_FILE_END) Update.end(true);
+  switch (up.status) {
+    case UPLOAD_FILE_START:
+      if (recording()) g_ota = Ota::Refused;                 // never cut a recording short
+      else g_ota = Update.begin(UPDATE_SIZE_UNKNOWN) ? Ota::Writing : Ota::Failed;
+      break;
+    case UPLOAD_FILE_WRITE:
+      if (g_ota == Ota::Writing && Update.write(up.buf, up.currentSize) != up.currentSize) g_ota = Ota::Failed;
+      break;
+    case UPLOAD_FILE_END:
+      if (g_ota == Ota::Writing && !Update.end(true)) g_ota = Ota::Failed;
+      break;
+    case UPLOAD_FILE_ABORTED:
+      if (Update.isRunning()) Update.abort();
+      g_ota = Ota::Idle;
+      break;
+  }
+  if (g_ota == Ota::Failed && Update.isRunning()) Update.abort();
+}
+
+void serve(void*) {
+  while (g_serving) {
+    g_server->handleClient();
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
+  xSemaphoreGive(g_taskDone);
+  vTaskDelete(nullptr);
 }
 }  // namespace
 
@@ -121,15 +174,21 @@ void start(CommandHandler onCommand) {
   g_server->on(UriBraces("/media/{}"), HTTP_DELETE, handleDelete);
   g_server->on("/update", HTTP_POST, handleUpdateDone, handleUpdateChunk);
   g_server->begin();
+  if (!g_taskDone) g_taskDone = xSemaphoreCreateBinary();
+  g_serving = true;
+  xTaskCreatePinnedToCore(serve, "wifi_sync", 8192, nullptr, 1, &g_task, 0);   // core 0, with the Wi-Fi stack
   g_active = true;
 }
 
 void stop() {
   if (!g_active) return;
+  g_serving = false;
+  WiFi.softAPdisconnect(true);                      // drops clients, so a running download ends quickly
+  xSemaphoreTake(g_taskDone, pdMS_TO_TICKS(5000));
+  g_task = nullptr;
   g_server->stop();
   delete g_server;
   g_server = nullptr;
-  WiFi.softAPdisconnect(true);
   WiFi.mode(WIFI_OFF);
   g_active = false;
   g_ip[0] = '\0';
@@ -137,8 +196,12 @@ void stop() {
 
 bool active() { return g_active; }
 
-void loop() {
-  if (g_server) g_server->handleClient();
+void setBusyFile(const char* path) {
+  const char* base = strrchr(path, '/');
+  base = base ? base + 1 : path;
+  portENTER_CRITICAL(&g_busyMux);
+  snprintf(g_busy, sizeof(g_busy), "%s", base);
+  portEXIT_CRITICAL(&g_busyMux);
 }
 
 const char* ssid() { return g_ssid; }

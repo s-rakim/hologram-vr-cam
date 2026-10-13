@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#0f1420">
 <title>Hologram Cam</title>
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
 <style>
   :root {
     --bg: #f4f5f8; --card: #ffffff; --ink: #141a26; --muted: #5d6677; --line: #e3e6ec;
@@ -139,8 +140,10 @@ const COMMAND = "7a1e0002-5c3b-4d8e-9f21-0c4a6b8d2e10";
 const STATUS  = "7a1e0003-5c3b-4d8e-9f21-0c4a6b8d2e10";
 const EVENT   = "7a1e0004-5c3b-4d8e-9f21-0c4a6b8d2e10";
 const $ = (id) => document.getElementById(id);
-let device = null, cmdChar = null, statusChar = null, last = null;
+let device = null, cmdChar = null, statusChar = null, eventChar = null, last = null;
 const enc = new TextEncoder(), dec = new TextDecoder();
+const SETTINGS = ["res", "quality", "segment", "maxrec"];
+const dirty = new Set();                         // settings edited here and not yet saved
 
 function log(text) {
   const t = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
@@ -151,15 +154,26 @@ function setConnected(on) {
   $("linkDot").classList.toggle("on", on);
   $("linkText").textContent = on ? (device?.name || "Connected") : "Not connected";
   $("connect").textContent = on ? "Disconnect" : "Connect";
-  for (const id of ["photo", "rec", "wifi", "res", "quality", "segment", "maxrec", "save", "find", "off"]) $(id).disabled = !on;
+  for (const id of ["photo", "rec", "wifi", ...SETTINGS, "save", "find", "off"]) $(id).disabled = !on;
+}
+
+// Phones allow one GATT operation at a time (Android rejects a write while a read is
+// running), so every read, write and subscribe goes through this queue.
+let gattQueue = Promise.resolve();
+function gatt(op) {
+  const run = gattQueue.then(op, op);
+  gattQueue = run.catch(() => {});
+  return run;
 }
 
 async function send(text) {
-  if (!cmdChar) return;
+  if (!cmdChar) return false;
   try {
-    await cmdChar.writeValueWithResponse(enc.encode(text));
+    await gatt(() => cmdChar.writeValueWithResponse(enc.encode(text)));
+    return true;
   } catch (e) {
     log(`command failed: ${e.message}`);
+    return false;
   }
 }
 
@@ -183,12 +197,8 @@ function showStatus(s) {
   $("recTime").textContent = `${Math.floor(s.t / 60)}:${String(s.t % 60).padStart(2, "0")}${s.seg > 1 ? ` (file ${s.seg})` : ""}`;
   $("wifi").textContent = s.wifi ? "Turn off" : "Turn on";
   renderWifi(s);
-  if (document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "SELECT") {
-    $("res").value = s.res;
-    $("quality").value = s.q;
-    $("segment").value = Math.round(s.seg_s / 60);
-    $("maxrec").value = Math.round(s.maxrec / 60);
-  }
+  const values = { res: s.res, quality: s.q, segment: Math.round(s.seg_s / 60), maxrec: Math.round(s.maxrec / 60) };
+  for (const id of SETTINGS) if (!dirty.has(id)) $(id).value = values[id];   // never overwrite your edits
 }
 
 function renderWifi(s) {
@@ -205,18 +215,26 @@ function renderWifi(s) {
              " to download or delete media.");
 }
 
+// A notification longer than the link's MTU arrives cut short; reading the
+// characteristic returns the whole value. Status reads are throttled so they
+// never pile up in the queue while recording.
+let statusReading = false, statusReadAt = 0;
 async function readStatus() {
+  if (!statusChar || statusReading || Date.now() - statusReadAt < 1000) return;
+  statusReading = true;
   try {
-    const v = await statusChar.readValue();      // a long read always returns the whole JSON
+    const v = await gatt(() => statusChar.readValue());
     showStatus(JSON.parse(dec.decode(v)));
-  } catch (e) { /* the next notification will retry */ }
+  } catch { /* the next notification will retry */ }
+  statusReadAt = Date.now();
+  statusReading = false;
 }
 
 function onStatus(ev) {
   try {
     showStatus(JSON.parse(dec.decode(ev.target.value)));
   } catch {
-    readStatus();                                // notification was cut short by a small MTU
+    readStatus();
   }
 }
 
@@ -224,8 +242,8 @@ const EVENT_TEXT = {
   photo: (d) => `Photo saved ${d.split("/").pop()}`,
   recording: (d) => `Recording to ${d.split("/").pop()}`,
   segment: (d) => `Continuing in ${d.split("/").pop()}`,
-  stopped: (d) => `Recording stopped (${d.replace("_", " ")})`,
-  refused: (d) => `Not possible: ${d.replace("_", " ")}`,
+  stopped: (d) => `Recording stopped (${d.replaceAll("_", " ")})`,
+  refused: (d) => `Not possible: ${d.replaceAll("_", " ")}`,
   wifi_on: (d) => `Wi-Fi on: ${d}`,
   wifi_off: () => "Wi-Fi off",
   battery_low: () => "Battery low",
@@ -233,12 +251,28 @@ const EVENT_TEXT = {
   power_off: () => "Glasses powered off",
 };
 
-function onEvent(ev) {
-  try {
-    const e = JSON.parse(dec.decode(ev.target.value));
-    log((EVENT_TEXT[e.ev] || ((d) => `${e.ev} ${d}`))(e.detail || ""));
-  } catch { /* ignore */ }
+function showEvent(e) {
+  log((EVENT_TEXT[e.ev] || ((d) => `${e.ev} ${d}`))(e.detail || ""));
 }
+
+async function onEvent(ev) {
+  try {
+    showEvent(JSON.parse(dec.decode(ev.target.value)));
+  } catch {
+    try {                                        // cut short by a small MTU: read the whole event
+      showEvent(JSON.parse(dec.decode(await gatt(() => eventChar.readValue()))));
+    } catch { /* lost; the status still shows the state */ }
+  }
+}
+
+function onDisconnected() {                      // one named handler, so reconnecting never adds a second
+  cmdChar = statusChar = eventChar = null;
+  setConnected(false);
+  log("Disconnected");
+}
+
+// The glasses name files from their clock, so send local wall-clock time, not UTC.
+const localClock = () => Math.floor(Date.now() / 1000) - new Date().getTimezoneOffset() * 60;
 
 async function connect() {
   if (device?.gatt.connected) {
@@ -247,22 +281,26 @@ async function connect() {
   }
   try {
     device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }] });
-    device.addEventListener("gattserverdisconnected", () => { setConnected(false); log("Disconnected"); });
+    device.addEventListener("gattserverdisconnected", onDisconnected);
     const server = await device.gatt.connect();
     const svc = await server.getPrimaryService(SERVICE);
     cmdChar = await svc.getCharacteristic(COMMAND);
     statusChar = await svc.getCharacteristic(STATUS);
-    const eventChar = await svc.getCharacteristic(EVENT);
-    await send(`time ${Math.floor(Date.now() / 1000)}`);   // first encrypted write triggers pairing (passkey)
-    await statusChar.startNotifications();
+    eventChar = await svc.getCharacteristic(EVENT);
+    // The first encrypted write starts pairing: the phone asks for the passkey.
+    if (!(await send(`time ${localClock()}`))) throw new Error("pairing failed - check the passkey and try again");
+    await gatt(() => statusChar.startNotifications());
     statusChar.addEventListener("characteristicvaluechanged", onStatus);
-    await eventChar.startNotifications();
+    await gatt(() => eventChar.startNotifications());
     eventChar.addEventListener("characteristicvaluechanged", onEvent);
     setConnected(true);
     log("Connected; clock synced");
     readStatus();
   } catch (e) {
     log(`Could not connect: ${e.message}`);
+    cmdChar = statusChar = eventChar = null;
+    if (device?.gatt.connected) device.gatt.disconnect();
+    setConnected(false);
   }
 }
 
@@ -272,12 +310,27 @@ $("rec").onclick = () => send(last?.rec ? "record stop" : "record start");
 $("wifi").onclick = () => send(last?.wifi ? "wifi off" : "wifi on");
 $("find").onclick = () => send("find");
 $("off").onclick = () => { if (confirm("Power the glasses off? Press the capture button to wake them.")) send("off"); };
+for (const id of SETTINGS) {
+  $(id).addEventListener("input", () => dirty.add(id));
+  $(id).addEventListener("change", () => dirty.add(id));
+}
 $("save").onclick = async () => {
-  await send(`set res ${$("res").value}`);
-  await send(`set quality ${$("quality").value}`);
-  await send(`set segment ${Math.max(1, Number($("segment").value)) * 60}`);
-  await send(`set maxrec ${Math.max(0, Number($("maxrec").value)) * 60}`);
-  log("Settings saved");
+  // Read every field first: status updates arrive between the writes.
+  const clamp = (id, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number($(id).value) || lo)));
+  const v = {
+    res: $("res").value,
+    quality: clamp("quality", 4, 63),            // the limits the glasses accept
+    segment: clamp("segment", 1, 30) * 60,
+    maxrec: clamp("maxrec", 0, 1440) * 60,
+  };
+  const ok = (await send(`set res ${v.res}`)) & (await send(`set quality ${v.quality}`))
+           & (await send(`set segment ${v.segment}`)) & (await send(`set maxrec ${v.maxrec}`));
+  if (ok) {
+    dirty.clear();
+    log("Settings saved");
+  } else {
+    log("Some settings were not saved");
+  }
 };
 
 if (!navigator.bluetooth) {
