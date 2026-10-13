@@ -169,3 +169,8 @@ python -m cad.stl_export
 The tests check, among other things, that the firmware's and the helmet software's pins match the CAD wiring, that the
 helmet's mirrors and panels fit inside the shell and clear the face, that every printed mesh is watertight and fits a
 256 mm bed, that the Revit edges are above Revit's short-curve tolerance, and that the generated files are up to date.
+
+## Author
+
+Designed and built by **Malcolm Opondo** ([@s-rakim](https://github.com/s-rakim)), the sole author and
+contributor. See [AUTHORS.md](AUTHORS.md).
