@@ -29,9 +29,9 @@ phone over Bluetooth.
 
 | | |
 |---|---|
-| **Video** | Up to 1280 x 720 MJPEG with 16 kHz mono sound, saved as AVI files on the microSD card. Long recordings roll over into a new file every 5 minutes (adjustable), so there is no 4 GB FAT32 limit and a crash loses at most one segment. Recording runs until you stop it (or set a maximum), the card fills, the battery runs low, or the chip gets too hot |
-| **Photos** | Up to 1600 x 1200 JPEG (2 MP with the stock OV2640; fit an OV5640 for 5 MP) |
-| **Privacy LED** | The firmware switches the front LED on *before* every photo and video and refuses to capture if it can't. Keep it visible |
+| **Video** | MJPEG up to 1600 x 1200 (1280 x 720 recommended for a smoother frame rate) with 16 kHz mono sound, saved as AVI files on the microSD card. Long recordings roll over into a new file every 5 minutes (adjustable), so there is no 4 GB FAT32 limit and a crash loses at most one segment. Recording runs until you stop it (or set a maximum), the card fills, the battery runs low, or the chip gets too hot |
+| **Photos** | Up to 1600 x 1200 JPEG (the stock 2 MP OV2640; an OV5640 also works, at the same size) |
+| **Privacy LED** | The firmware switches the front LED on *before* every photo and video, and refuses to capture if the LED control pin is held low (a shorted driver). It can't see a broken LED or wire, so check that it lights. Keep it visible |
 | **Phone app** | [`phone/index.html`](phone/index.html), a Web Bluetooth page: photo, record, live status (battery, recording time, card space left), settings, find-my-glasses beep, power off. Pairing needs a 6-digit passkey |
 | **Getting files off** | Double-tap the touch pad (or tap *Wi-Fi sync* in the app): the glasses start a Wi-Fi hotspot with a random password, and a web page there lists, downloads and deletes your files. Firmware updates go through the same page |
 
@@ -70,7 +70,7 @@ panel behind a lens gives you.
 | **Field of view** | **~106° horizontal x 74° vertical** across both eyes, with 50° of stereo overlap, ray-traced from the model (`python -m hologram.vr optics`). Treat it as an upper bound: the edges will be softer than the centre, and North Star builders measure well below that design's own claims |
 | **Sound** | The closed ear cups carry 40 mm drivers on two I2S amps. A 360 photo `beach.jpg` with a `beach.wav` beside it plays that sound *around* you, fixed to the scene: turn your head and the sound stays where it belongs. 4-channel ambisonic (AmbiX), stereo and mono files all work |
 | **Modes** | 360 photo viewer; gallery (photos from the glasses on a big virtual screen); camera passthrough (Camera Module 3 Wide, mapped to the true directions so the room looks the right size) |
-| **Tracking** | MPU-6050 at 500 Hz with a Madgwick filter (3DoF). Hold the action button to recentre |
+| **Tracking** | MPU-6050 at 200 Hz with a Madgwick filter (3DoF). Hold the action button to recentre |
 | **Power** | Pi 5 on a 4 x 18650 UPS board in the rear aero pod, which also counterweights the optics. The displays switch off when the helmet is put down, and a still view is not re-rendered. It warns at 10 % and shuts down cleanly at 3 % |
 
 | Button (control pod on the left of the chin bar) | Action |
@@ -136,8 +136,9 @@ pio run -t upload            # first flash over USB-C; later updates over Wi-Fi 
 
 Change `BLE_PASSKEY` in `firmware/glasses/include/config.h` before you flash.
 
-**Phone app:** publish `phone/` with GitHub Pages (*Settings > Pages > Source: GitHub Actions*). The included workflow
-deploys it from `main`. Then open the page in Chrome (Android/desktop) or Bluefy (iOS).
+**Phone app:** publish `phone/` with GitHub Pages. First enable *Settings > Pages > Source: GitHub Actions*, then run
+the *Phone app* workflow from the Actions tab (it also re-runs by itself whenever `phone/` changes on `main`). Open the
+page in Chrome (Android/desktop) or Bluefy (iOS).
 
 **Helmet** on Raspberry Pi OS Lite (64-bit, Bookworm):
 
@@ -146,7 +147,7 @@ git clone https://github.com/s-rakim/hologram-vr-cam.git && cd hologram-vr-cam
 ./deploy/setup_pi5.sh && sudo reboot
 ```
 
-**Try the helmet software on a computer:**
+**Try the helmet software on a computer** (Python 3.11 or newer):
 
 ```bash
 pip install numpy

@@ -21,14 +21,16 @@ sleep_after_still_s = 60.0   # displays off when the helmet is put down
 wake_threshold_deg = 2.0
 
 # Brow panel -> ellipsoidal visor mirror -> eye. Lengths in mm, relative to the RIGHT eye
-# (x outward); the left eye is the mirror image. Check the numbers with: hologram-vr optics
+# (x outward); the left eye is the mirror image. Check the numbers with:
+#     python3 -m hologram.vr optics --config /etc/hologram/vr.toml
 [reflector]
 ipd = 63.0
 mirror_point = [14.0, 68.0, 8.0]   # centre of the mirror
 focus = [16.0, 5.0, 75.0]          # the ellipsoid's second focus (above the eye)
 image_distance_m = 1.5             # where the picture appears (sets how far the panel sits from the mirror)
 display_mm = [52.1, 52.1]          # active area of one 2.9in 1440 x 1440 panel
-display_roll_deg = 0.0             # calibration: panel turned in its tray
+left_roll_deg = 0.0                # calibration: one eye's picture slightly rotated (degrees; try the
+right_roll_deg = 0.0               # other sign if it gets worse)
 left_flip = [false, false]         # calibration: (x, y) if that eye's picture is mirrored / upside down
 right_flip = [false, false]
 nasal_clearance = 1.5
@@ -48,9 +50,9 @@ cant_deg = 0.0
 enabled = true
 i2c_bus = 1
 address = 0x68
-rate_hz = 500.0
+rate_hz = 200.0              # the MPU-6050 is set to 200 samples/s
 beta = 0.05                  # Madgwick gain: higher = less drift, more jitter
-calibration_samples = 400    # keep the helmet still for ~1 s at start-up
+calibration_samples = 400    # keep the helmet still for ~2 s at start-up
 axis_map = ["x", "y", "z"]   # e.g. ["-y", "x", "z"] if the IMU board is mounted turned
 
 [media]

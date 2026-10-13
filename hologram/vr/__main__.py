@@ -6,6 +6,9 @@
     python -m hologram.vr imu-check
     python -m hologram.vr optics [--config FILE]
     python -m hologram.vr eye-view [--yaw DEG] [--out FILE]
+
+Every command reads /etc/hologram/vr.toml when it exists (the helmet's installed
+settings), unless --config FILE says otherwise.
 """
 from __future__ import annotations
 
@@ -48,6 +51,7 @@ def cmd_demo(args: argparse.Namespace) -> int:
     out.mkdir(parents=True, exist_ok=True)
     clock = [0.0]
     app = _mock_app(args, clock=lambda: clock[0])
+    app.tracking_live = True              # as if the IMU were running, so the helmet can sleep
 
     def tap(which: str) -> None:
         app.press(which, True)
@@ -153,6 +157,14 @@ def cmd_optics(args: argparse.Namespace) -> int:
     return 0
 
 
+SYSTEM_CONFIG = Path("/etc/hologram/vr.toml")    # written by deploy/setup_pi5.sh
+
+
+def _default_config() -> str | None:
+    """Commands use the helmet's installed settings unless told otherwise."""
+    return str(SYSTEM_CONFIG) if SYSTEM_CONFIG.is_file() else None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hologram.vr", description="Hologram VR headset")
     parser.add_argument("--version", action="version", version=__version__)
@@ -160,19 +172,20 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("run", help="run the headset")
-    p.add_argument("--config", help="TOML config file (default: built-in settings)")
+    p.add_argument("--config", default=_default_config(),
+                   help="TOML config file (default: /etc/hologram/vr.toml if it exists, else built-in settings)")
     p.add_argument("--mock", action="store_true", help="fake hardware (desktop)")
     p.add_argument("--window", action="store_true",
                    help="show output in a window (M = mode, SPACE = action, -/= = volume)")
     p.set_defaults(func=cmd_run)
 
     p = sub.add_parser("demo", help="headless walk-through with mock hardware")
-    p.add_argument("--config")
+    p.add_argument("--config", default=_default_config())
     p.add_argument("--out", help="folder for the rendered frames")
     p.set_defaults(func=cmd_demo)
 
     p = sub.add_parser("snapshot", help="render one stereo frame to PNG")
-    p.add_argument("--config")
+    p.add_argument("--config", default=_default_config())
     p.add_argument("--mode", choices=[m.value for m in Mode], default="panorama")
     p.add_argument("--yaw", type=float, default=0.0, help="degrees, left positive")
     p.add_argument("--pitch", type=float, default=0.0, help="degrees, up positive")
@@ -180,11 +193,11 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_snapshot)
 
     p = sub.add_parser("optics", help="print the field of view of the configured optics")
-    p.add_argument("--config")
+    p.add_argument("--config", default=_default_config())
     p.set_defaults(func=cmd_optics)
 
     p = sub.add_parser("eye-view", help="simulate what each eye sees through the optics")
-    p.add_argument("--config")
+    p.add_argument("--config", default=_default_config())
     p.add_argument("--yaw", type=float, default=0.0)
     p.add_argument("--size", type=int, default=480)
     p.add_argument("--fov", type=float, default=140.0)
@@ -192,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=cmd_eye_view)
 
     p = sub.add_parser("imu-check", help="print live orientation from the IMU")
-    p.add_argument("--config")
+    p.add_argument("--config", default=_default_config())
     p.set_defaults(func=cmd_imu_check)
 
     args = parser.parse_args(argv)

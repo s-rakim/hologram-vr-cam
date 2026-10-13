@@ -11,6 +11,7 @@ from hologram.sounds import PATTERNS, synth
 from hologram.vr.audio import (
     AudioEngine,
     MemorySink,
+    Pacer,
     WavReader,
     decode_ears,
     encode,
@@ -159,3 +160,19 @@ def test_engine_thread_streams_and_closes_when_idle():
     engine.close()
     assert sinks and sinks[0].closed
     assert np.abs(sinks[0].samples()).max() > 1000
+
+
+def test_pacer_keeps_the_mixer_close_to_real_time():
+    t = [0.0]
+
+    def sleep(s):
+        t[0] += s
+
+    pacer = Pacer(48000, max_ahead_s=0.06, clock=lambda: t[0], sleep=sleep)
+    for _ in range(200):                           # a mixer that renders instantly
+        pacer.wait(1024)
+        assert pacer.ahead() <= 0.06 + 1024 / 48000 + 1e-9
+    assert t[0] == pytest.approx(200 * 1024 / 48000 - 0.06 - 1024 / 48000, abs=0.03)
+    t[0] += 5.0                                    # fell far behind (stall): restart instead of bursting
+    pacer.wait(1024)
+    assert pacer.ahead() <= 1024 / 48000 + 1e-9

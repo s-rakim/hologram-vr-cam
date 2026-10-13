@@ -42,12 +42,22 @@ class VrHardware:
     keep: list[object] = field(default_factory=list)
 
 
+FULL_FIELD_MODE = (2304, 1296)         # Camera Module 3 (IMX708): 2x2 binned, full sensor width
+
+
 class Picamera2Preview:
     def __init__(self, size: tuple[int, int]) -> None:
         from picamera2 import Picamera2
 
         self.cam = Picamera2()
-        self.cam.configure(self.cam.create_preview_configuration(main={"size": tuple(size), "format": "XBGR8888"}))
+        main = {"size": tuple(size), "format": "XBGR8888"}
+        # For 1280x720 libcamera would pick the IMX708's 1536x864 mode, a centre crop (~79 deg wide), but
+        # the renderer maps the full ~102 deg field. Ask for the full-field 2x2-binned mode instead.
+        try:
+            config = self.cam.create_preview_configuration(main=main, sensor={"output_size": FULL_FIELD_MODE})
+        except TypeError:                     # older picamera2 without the sensor argument
+            config = self.cam.create_preview_configuration(main=main, raw={"size": FULL_FIELD_MODE})
+        self.cam.configure(config)
         self.running = False
 
     def start(self) -> None:

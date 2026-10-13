@@ -18,6 +18,9 @@ ear cups give head-tracked surround sound. Keep these open while you work:
 >   cells, and don't let the pod's metal parts touch the cell terminals.
 > - **Heat.** The Pi 5 throttles at 80 °C. Keep the pod's vents clear.
 > - **Fogging.** A closed visor fogs up. The top intake and the gap under the chin bar vent it; don't seal them.
+> - **Sunlight.** The concave visor mirrors can focus sunlight that gets in through the neck opening onto the panels,
+>   which can burn the panels or scorch the foam. Never leave the helmet in direct sun, especially resting crown-down
+>   with the neck opening towards a window. Store it upright on its neck ring, or with a cover over the opening.
 
 ## How the optics work
 
@@ -131,12 +134,12 @@ either way.
    Otherwise set `tracking.axis_map`.
 4. Mount the bridge to the inside of the crown front with three M3 x 20 mm nylon standoffs, and the mirrors to the
    inside of the shell at their edges, so each sits where the model shows (01 assembly sheet). Hot glue lets you nudge
-   them while you calibrate (step 8); use epoxy once everything looks right.
+   them while you calibrate (step 7); use epoxy once everything looks right.
 5. Fit the camera behind its 9 mm hole, pointing straight ahead.
 
 ## 5. Electronics
 
-Wire everything on the desk first, exactly as in [wiring.md](wiring.md), and run the software (step 7) before anything
+Wire everything on the desk first, exactly as in [wiring.md](wiring.md), and run the software (step 6) before anything
 goes into the shell.
 
 **Rear pod:** stack the Pi 5 (with the Active Cooler) on the UPS board as its manual describes, fit the 4 cells, then
@@ -165,7 +168,7 @@ internal pull-ups.
    ```bash
    git clone https://github.com/s-rakim/hologram-vr-cam.git
    cd hologram-vr-cam
-   ./deploy/setup_pi5.sh       # packages, I2C + I2S, HDMI mode, settings, systemd service
+   ./deploy/setup_pi5.sh       # packages, I2C + I2S, HDMI mode, power-off fix, settings, service
    sudo reboot
    ```
 
@@ -177,7 +180,9 @@ internal pull-ups.
    - the panels light up with the console
 
 Settings are in `/etc/hologram/vr.toml` (a copy of [`config/vr.toml`](../../config/vr.toml)); restart with
-`sudo systemctl restart hologram-vr` after editing.
+`sudo systemctl restart hologram-vr` after editing. Every `python3 -m hologram.vr ...` command below reads that file
+too (add `--config FILE` to try another one). Stop the service while you calibrate
+(`sudo systemctl stop hologram-vr`) so the commands can use the IMU and displays.
 
 ## 7. Calibrate
 
@@ -186,7 +191,8 @@ Settings are in `/etc/hologram/vr.toml` (a copy of [`config/vr.toml`](../../conf
 2. **Panel orientation:** with no panoramas installed, the helmet shows a grid world with a red post straight ahead
    (green to the right, blue to the left, yellow behind). `python3 -m hologram.vr eye-view` simulates what each eye
    should see through the mirror, for comparison. If one eye's picture is mirrored or upside down, set that
-   eye's `reflector.left_flip` / `right_flip` (`[x, y]`). If it's slightly rotated, set `display_roll_deg`.
+   eye's `reflector.left_flip` / `right_flip` (`[x, y]`). If it's slightly rotated, set that eye's
+   `reflector.left_roll_deg` / `right_roll_deg` (degrees; if it gets worse, use the other sign).
 3. **Fusion:** the two eyes' grids should merge into one. If they don't, nudge the mirrors (they are still on hot glue)
    until the horizon is level and the red post sits in the same place for both eyes. Then epoxy them.
 4. **Distortion:** if straight grid lines still bow, the mirror sits a little off its modelled place. Adjust
@@ -203,6 +209,9 @@ Settings are in `/etc/hologram/vr.toml` (a copy of [`config/vr.toml`](../../conf
   is fixed to the scene and follows your head through the ear cups.
 - **Photos from the glasses:** copy them to `~/DCIM/Hologram` and use gallery mode.
 
+New files are picked up the next time you switch to that mode; there's no need to restart anything. Files that can't
+be read (half-copied, or not really images) are skipped.
+
 ## 9. Everyday use
 
 | Button | Tap | Hold |
@@ -211,15 +220,21 @@ Settings are in `/etc/hologram/vr.toml` (a copy of [`config/vr.toml`](../../conf
 | Action | next panorama / photo | recentre the view |
 | Volume - / + | ear-cup volume | |
 
-The displays switch off after the helmet has been still for 60 s (put down) and wake when you pick it up. Battery
-life is about 4.3-4.8 hours from four 3500 mAh cells (estimate; see [../battery.md](../battery.md)). It warns at 10 % and
-shuts down cleanly at 3 %. Charge through the UPS board's USB-C port with the official 27 W Pi 5 supply.
+The displays switch off after the helmet has been still for 60 s (put down), and wake when you pick it up or press any
+button (that press does nothing else). Without working head tracking they stay on. Battery life is about 4.3-4.8 hours
+from four 3500 mAh cells (estimate; see [../battery.md](../battery.md)). It warns at 10 % and shuts down cleanly at 3 %.
+Charge through the UPS board's USB-C port with the official 27 W Pi 5 supply.
+
+**Switching on:** after a power-off (mode held for 2 s, or the low-battery shutdown) press the Pi 5's own power button
+through the small hole in the rear pod cover. The setup script sets the Pi 5 to switch fully off when it halts, so a
+powered-off helmet draws next to nothing. For storage longer than a few weeks, charge it to about half and take one cell
+out (or all four).
 
 ## Troubleshooting
 
 | Symptom | Check |
 |---|---|
-| Black panels | The board may not like the forced mode: remove `video=HDMI-A-1:...` from `/boot/firmware/cmdline.txt`, or try `2880x1440@60` without the `M`. Check the load switch on GPIO 22 is on |
+| Black panels | The board may not like the forced mode: remove `video=HDMI-A-1:...` from `/boot/firmware/cmdline.txt`, or try `2880x1440@60` without the `M`. Check `gpio=22=op,dh` is in `/boot/firmware/config.txt` (the display board gets power from boot) and the load switch output reads 5 V |
 | Picture tears or stutters | Lower `display.render_scale` (e.g. 0.4). Rendering runs on the CPU (numpy): 720 x 720 per eye takes about 14 ms per frame on a desktop CPU core, so expect very roughly 25-40 fps on a Pi 5. A still view isn't re-rendered at all |
 | Double image | Mirrors not aligned: see calibration step 3 |
 | No sound | `aplay -l` must show `sndrpihifiberry`; check `dtoverlay=hifiberry-dac` in `/boot/firmware/config.txt` and the amp wiring |

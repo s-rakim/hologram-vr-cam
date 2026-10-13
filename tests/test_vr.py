@@ -200,6 +200,7 @@ def test_volume_buttons(tmp_path):
 def test_still_view_is_not_rerendered_and_sleep_saves_power(tmp_path):
     clock = Clock()
     app, _, powered, _ = make_app(tmp_path, clock)
+    app.tracking_live = True                                          # as if the IMU thread were running
     frame = app.render()
     w, h = app.eye_size()
     assert frame.shape == (h, 2 * w, 4)
@@ -236,6 +237,7 @@ def test_panorama_sound_plays_around_you_only_in_the_360_view(tmp_path, monkeypa
     monkeypatch.setattr(app_module, "load_image", lambda path: np.zeros((64, 128, 3), np.uint8))
     clock = Clock()
     app, *_ = make_app(tmp_path, clock)
+    app.tracking_live = True
     assert app.render() is not None
     assert app.audio.scene == pano_dir / "beach.wav"
     tap(app, clock, "mode")                                           # gallery: no scene sound
@@ -265,3 +267,78 @@ def test_passthrough_renders_the_camera(tmp_path):
     app, *_ = make_app(tmp_path, clock, start_mode="passthrough")
     frame = app.render()
     assert frame is not None and frame.any()
+
+
+def test_without_head_tracking_the_helmet_never_sleeps(tmp_path):
+    clock = Clock()
+    app, _, powered, _ = make_app(tmp_path, clock)
+    assert not app.tracking_live                                      # no IMU thread in the tests
+    clock.t += app.cfg.display.sleep_after_still_s * 3
+    app.step()
+    assert not app.asleep and False not in powered
+
+
+def test_any_button_wakes_the_helmet_without_acting(tmp_path):
+    clock = Clock()
+    app, _, powered, _ = make_app(tmp_path, clock)
+    app.tracking_live = True
+    clock.t += app.cfg.display.sleep_after_still_s + 1
+    app.step()
+    assert app.asleep
+    mode = app.mode
+    tap(app, clock, "mode")
+    assert not app.asleep and powered[-1] is True and app.mode is mode   # woke up, didn't change mode
+    tap(app, clock, "mode")
+    assert app.mode is not mode                                       # the next tap works normally
+
+
+def test_unreadable_images_are_skipped(tmp_path, monkeypatch):
+    pano_dir = tmp_path / "360"
+    pano_dir.mkdir()
+    for name in ("._beach.jpg", "broken.jpg", "good.jpg"):
+        (pano_dir / name).write_bytes(b"")
+
+    def fake_load(path):
+        if path.name == "broken.jpg":
+            raise OSError("image file is truncated")
+        return np.full((64, 128, 3), 200, np.uint8)
+
+    monkeypatch.setattr(app_module, "load_image", fake_load)
+    clock = Clock()
+    app, *_ = make_app(tmp_path, clock)
+    assert [p.name for p in app._panoramas] == ["broken.jpg", "good.jpg"]   # hidden files never listed
+    frame = app.render()
+    assert frame is not None and frame[..., :3].max() == 200
+    assert [p.name for p in app._panoramas] == ["good.jpg"]
+
+
+def test_photos_copied_later_show_up(tmp_path, monkeypatch):
+    monkeypatch.setattr(app_module, "load_image", lambda path: np.zeros((32, 32, 3), np.uint8))
+    clock = Clock()
+    app, *_ = make_app(tmp_path, clock)
+    assert app._photos == []
+    photos = tmp_path / "photos"
+    photos.mkdir()
+    (photos / "HVR_20261011_143012_0042.jpg").write_bytes(b"")
+    tap(app, clock, "mode")                                           # into gallery
+    assert app.mode is Mode.GALLERY and [p.name for p in app._photos] == ["HVR_20261011_143012_0042.jpg"]
+
+
+def test_heat_halves_the_frame_rate(tmp_path, monkeypatch):
+    clock = Clock()
+    app, *_ = make_app(tmp_path, clock, fps=30)
+    sleeps = []
+    monkeypatch.setattr(app_module.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(app.thermal, "update", lambda: True)
+    monkeypatch.setattr(app, "track_forever", lambda: None)
+    calls = {"n": 0}
+
+    def step():
+        calls["n"] += 1
+        if calls["n"] > 3:
+            app.running = False
+
+    monkeypatch.setattr(app, "step", step)
+    monkeypatch.setattr(app, "render", lambda: None)
+    app.run()
+    assert sleeps and max(sleeps) == pytest.approx(1 / 15, rel=1e-3)   # 30 fps -> 15 fps when hot

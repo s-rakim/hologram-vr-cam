@@ -158,3 +158,19 @@ def test_pack_round_trip_and_rgbx_frames():
     assert np.array_equal(unpack(packed)[..., :3], img)
     with pytest.raises(ValueError):
         pack(np.zeros((5, 7), np.uint8))
+
+
+def test_lens_shift_moves_each_lens_centre_towards_the_nose():
+    left, right = stereo_tables(LensOptics(fov_deg=60, k1=0, k2=0, lens_center_shift=0.2), 101, 51)
+    def ahead_column(t):
+        return int(np.argmax(t.rays[25] @ np.array([0, 1, 0], np.float32)))
+    assert ahead_column(right) < 50 < ahead_column(left)   # right eye's nose side is image-left, and vice versa
+
+
+def test_roll_is_set_per_eye():
+    base = ReflectorOptics()
+    rolled = ReflectorOptics(right_roll_deg=5.0)
+    for side in (-1,):
+        assert np.allclose(base.display_frame(side)[1], rolled.display_frame(side)[1])   # left panel unchanged
+    u0, u1 = base.display_frame(1)[1], rolled.display_frame(1)[1]
+    assert math.degrees(math.acos(float(np.clip(u0 @ u1, -1, 1)))) == pytest.approx(5.0, abs=1e-6)

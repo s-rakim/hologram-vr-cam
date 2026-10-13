@@ -25,6 +25,7 @@ add_line "dtparam=i2s=on"
 add_line "dtoverlay=hifiberry-dac"     # stereo I2S out: left amp = left ear, right amp = right ear
 add_line "camera_auto_detect=1"
 add_line "usb_max_current_enable=1"    # the UPS board supplies 5 A
+add_line "gpio=22=op,dh"               # display board powered from boot (EDID readable, console visible)
 
 echo "==> Display: one 2880x1440 side-by-side signal on HDMI0"
 # Most dual-panel driver boards report this mode in their EDID. If yours shows a black
@@ -39,7 +40,18 @@ sudo mkdir -p /etc/hologram
 [ -f /etc/hologram/vr.toml ] || sudo cp "$REPO/config/vr.toml" /etc/hologram/vr.toml
 sudo -u "$RUN_AS" mkdir -p "/home/$RUN_AS/Pictures/Hologram/360" "/home/$RUN_AS/DCIM/Hologram"
 
-echo "==> Allow the power button to shut the Pi down"
+echo "==> Power off really means off"
+# By default a halted Pi 5 keeps its power rails up and draws ~1.2-1.6 W, which would drain the
+# cells after a power-off or the 3 % low-battery shutdown. The Pi 5's own power button turns it back on.
+EEPROM_CONF="$(mktemp)"
+sudo rpi-eeprom-config > "$EEPROM_CONF"
+set_eeprom() { grep -q "^$1=" "$EEPROM_CONF" && sed -i "s/^$1=.*/$1=$2/" "$EEPROM_CONF" || echo "$1=$2" >> "$EEPROM_CONF"; }
+set_eeprom POWER_OFF_ON_HALT 1
+set_eeprom WAKE_ON_GPIO 0
+sudo rpi-eeprom-config --apply "$EEPROM_CONF"
+rm -f "$EEPROM_CONF"
+
+echo "==> Allow the mode button to shut the Pi down"
 echo "$RUN_AS ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff" | sudo tee /etc/sudoers.d/hologram-vr >/dev/null
 sudo chmod 440 /etc/sudoers.d/hologram-vr
 
@@ -51,10 +63,11 @@ sudo systemctl enable hologram-vr.service
 
 cat <<DONE
 
-Done. Reboot, then check:
+Done. Reboot, then check (to switch the helmet on after a power-off, press the Pi 5's power
+button through the hole in the rear pod cover):
   i2cdetect -y 1                  # 68 = IMU, 36 = UPS fuel gauge
   rpicam-hello --list-cameras     # the Camera Module 3 Wide
   aplay -l                        # sndrpihifiberry = the ear-cup amps
-  python3 -m hologram.vr optics   # field of view of your optics settings
+  python3 -m hologram.vr optics   # field of view of your settings (reads /etc/hologram/vr.toml)
   journalctl -u hologram-vr -f    # live log of the helmet software
 DONE

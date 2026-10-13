@@ -11,6 +11,7 @@
 
 #include "battery.h"
 #include "ble_link.h"
+#include "camera_hw.h"
 #include "capture.h"
 #include "config.h"
 #include "gestures.h"
@@ -162,6 +163,7 @@ void setWifi(bool on) {
     wifi_sync::start(handleCommandText);
   } else {
     wifi_sync::stop();
+    if (!capture.recording() && !camera_hw::running()) setCpuFrequencyMhz(80);   // back to the idle clock
   }
   sounds::play(on ? sounds::Sound::WifiOn : sounds::Sound::WifiOff);
   event(on ? "wifi_on" : "wifi_off", on ? wifi_sync::ssid() : "");

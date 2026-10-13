@@ -15,7 +15,9 @@ Ray-Ban-style camera glasses around a Seeed Studio XIAO ESP32-S3 Sense. Keep the
 > protection PCB, never pierce it, and keep it away from the soldering iron. The firmware stops recording above
 > 75 °C chip temperature because the board sits next to your head; don't raise that. Recording people without their
 > knowledge is illegal in many places. The privacy LED lights while every photo is taken and for the whole of every
-> recording, and the firmware refuses to capture if it can't switch it on, so keep it visible.
+> recording. The firmware refuses to capture if the LED control pin is held low (a shorted driver), but it can't tell
+> if the LED, its resistor or a wire is broken, so check that the LED lights before you use the glasses, and keep it
+> visible.
 
 ## 0. Tools and parts
 
@@ -23,7 +25,8 @@ Ray-Ban-style camera glasses around a Seeed Studio XIAO ESP32-S3 Sense. Keep the
 needle files, CA glue, M1.4 screwdriver, a USB-C cable.
 
 **Order the parts** in [bom.md](bom.md). The XIAO ESP32-S3 *Sense* comes with an OV2640 camera on a short ribbon. For
-the endpiece position you want a camera with a **long (~75 mm) FPC**; an OV5640 with autofocus gives 5 MP photos.
+the endpiece position you want a camera with a **long (~75 mm) FPC**. An OV5640 also works, but the firmware still
+takes photos at up to 1600 x 1200 and doesn't drive its autofocus.
 
 ## 1. Print
 
@@ -46,6 +49,7 @@ nylon is best (strong at 1.5 mm walls); resin works; FDM is fine for a first fit
 | Right temple, underside, 62 mm | 9 x 4 mm slot | magnetic charging contacts |
 | Right temple, outer wall, 17 mm, just above the centreline | 1 mm hole | microphone (line it up with the mic on the Sense board) |
 | Left temple, underside, 64 mm | 4 x 8 mm slot | power slide switch |
+| Right temple front wall, vertical, centred about 13 mm above the centreline | 13 x 1.5 mm slot | camera FPC (it runs on edge; thread the free end through before plugging it into the XIAO) |
 | Both temple front walls, and both ends of the wire channel | 5 x 2 mm slots | wires through the hinges |
 
 ## 2. Flash and bench-test first
@@ -71,7 +75,7 @@ frame. Faults are far easier to find now than when the temples are closed.
    - Hold the button: the LED lights first, then the start sound plays. Tap to stop, then check the `.avi` plays
      (VLC or any player) with sound.
    - Tap the touch pad: 1-4 beeps for the battery level.
-   - Phone app (step 6): connect, pair, take a photo from the phone.
+   - Phone app (step 7): connect, pair, take a photo from the phone.
 
 ## 3. Front frame
 
@@ -116,8 +120,9 @@ multimeter, then close the lids (2 x M1.4 screws or a bead of hot glue, so you c
 
 The app is the single page `phone/index.html`. Web Bluetooth only works over **https**, so publish it once:
 
-1. Merge to `main` and enable *Settings > Pages > Build and deployment > Source: GitHub Actions*. The workflow in
-   `.github/workflows/phone-app.yml` publishes `phone/` on every change.
+1. Enable *Settings > Pages > Build and deployment > Source: GitHub Actions* first, then merge to `main` and run the
+   *Phone app* workflow from the Actions tab (`.github/workflows/phone-app.yml`). It also re-publishes `phone/` by
+   itself whenever `phone/` changes on `main`.
 2. Open the page on your phone: **Chrome** on Android, or the free **Bluefy** browser on iPhone (Safari has no Web
    Bluetooth). *Add to home screen* makes it look like an app.
 3. Tap **Connect**, pick *Hologram Cam*, and enter your passkey when asked. The phone remembers the pairing.
@@ -170,7 +175,8 @@ so a small power bank in a pocket extends recording indefinitely.
 |---|---|
 | Phone can't find the glasses | Is Bluetooth on, and are you in Chrome (Android) or Bluefy (iOS)? Tap the button to wake them |
 | Pairing fails | The passkey is the one in `config.h` when you flashed. Forget the device in the phone's Bluetooth settings and retry |
-| "refused: privacy_led_fault" | The LED driver isn't working, so the firmware won't record. Check the LED wiring and the 2N7002 |
+| "refused: privacy_led_fault" | The LED control pin is held low (shorted 2N7002 gate or wire), so the firmware won't capture. Check the LED wiring and the 2N7002 |
+| The LED doesn't light, but it records | The firmware can only see a shorted control pin, not a broken LED, resistor or wire. Fix it before using the glasses |
 | "refused: storage_full" | Card missing, not FAT32, or full (it keeps 64 MB free) |
 | "refused: too_hot" / "low_battery" | Let it cool down below 65 °C / charge it |
 | Video stops after a while | It stopped because of battery, heat or storage; the app shows the reason |

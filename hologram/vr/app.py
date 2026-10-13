@@ -65,7 +65,8 @@ def list_images(folder: str) -> list[Path]:
     root = Path(folder).expanduser()
     if not root.is_dir():
         return []
-    return sorted(p for p in root.iterdir() if p.suffix.lower() in IMAGE_TYPES)
+    return sorted(p for p in root.iterdir()                  # skips macOS "._" files and other hidden ones
+                  if p.suffix.lower() in IMAGE_TYPES and not p.name.startswith("."))
 
 
 class VrApp:
@@ -106,6 +107,8 @@ class VrApp:
         self._last_q: qt.Quat | None = None
         self._still_ref = qt.IDENTITY
         self._still_since = clock()
+        self.tracking_live = False        # the IMU thread is delivering samples; sleep-when-still needs it
+        self._ignore_release: set[str] = set()   # buttons pressed to wake the helmet
         hw.bind_inputs({name: (lambda pressed, n=name: self.press(n, pressed)) for name in BUTTONS})
         self._enter(self.mode)
 
@@ -164,7 +167,18 @@ class VrApp:
         if sound != self.audio.scene:
             self.audio.set_scene(sound)
 
+    def _rescan(self) -> None:
+        """Pick up photos and panoramas copied over while the helmet was running."""
+        def refresh(files: list[Path], index: int, folder: str) -> tuple[list[Path], int]:
+            current = files[index] if files else None
+            files = list_images(folder)
+            return files, files.index(current) if current in files else 0
+
+        self._panoramas, self._pano_index = refresh(self._panoramas, self._pano_index, self.cfg.media.panoramas)
+        self._photos, self._photo_index = refresh(self._photos, self._photo_index, self.cfg.media.photos)
+
     def set_mode(self, mode: Mode) -> None:
+        self._rescan()
         self.mode = mode
         self._renderer = None
         self._dirty = True
@@ -172,17 +186,25 @@ class VrApp:
         self.history.append(("mode", mode.value))
 
     # -- sleep / battery ----------------------------------------------------------------------
+    def _wake(self) -> None:
+        self._still_since = self.clock()
+        if not self.asleep:
+            return
+        self.asleep = False
+        self.hw.set_display_power(True)
+        self._enter(self.mode)
+        self._dirty = True
+        self.audio.play("wake")
+        self.history.append(("wake", None))
+
     def _update_sleep(self, q: qt.Quat) -> None:
         now = self.clock()
+        if not self.tracking_live:            # no head tracking: can't tell it was put down, so never sleep
+            self._wake()
+            return
         if angle_between(q, self._still_ref) > self.cfg.display.wake_threshold_deg:
-            self._still_ref, self._still_since = q, now
-            if self.asleep:
-                self.asleep = False
-                self.hw.set_display_power(True)
-                self._enter(self.mode)
-                self._dirty = True
-                self.audio.play("wake")
-                self.history.append(("wake", None))
+            self._still_ref = q
+            self._wake()
         elif not self.asleep and now - self._still_since > self.cfg.display.sleep_after_still_s:
             self.asleep = True
             self.hw.set_display_power(False)
@@ -222,6 +244,15 @@ class VrApp:
                 name, pressed, t = self.events.get_nowait()
             except queue.Empty:
                 break
+            if pressed and self.asleep:      # any button wakes the helmet; that press does nothing else
+                self._wake()
+                self._ignore_release.add(name)
+                continue
+            if name in self._ignore_release:
+                if not pressed:
+                    self._ignore_release.discard(name)
+                continue
+            self._still_since = self.clock()  # in use
             detector = self.buttons[name]
             for g in (detector.press(t) if pressed else detector.release(t)):
                 self.handlers[name](g)
@@ -241,16 +272,32 @@ class VrApp:
             self._tables = stereo_tables(self.cfg.optics(), *self.eye_size())
         return self._tables
 
+    @staticmethod
+    def _load(files: list[Path], index: int) -> tuple[np.ndarray | None, int]:
+        """The image at ``index``; unreadable files (half-copied, not images) are dropped from ``files``."""
+        while files:
+            index %= len(files)
+            try:
+                img = load_image(files[index])
+                if img.ndim != 3 or img.shape[2] < 3 or min(img.shape[:2]) < 2:
+                    raise ValueError(f"unusable image shape {img.shape}")
+                return img[..., :3], index
+            except Exception as err:          # Pillow raises several kinds; one bad file must not stop the helmet
+                log.warning("skipping %s: %s", files[index].name, err)
+                files.pop(index)
+        return None, 0
+
     def _scene(self) -> PanoramaRenderer:
         if self._renderer is None:
             m = self.cfg.media
             if self.mode is Mode.GALLERY:
-                photo = load_image(self._photos[self._photo_index]) if self._photos else _no_photos_card()
-                self._renderer = VirtualScreenRenderer(grid_world(), photo, self.tables(),
-                                                       width=m.screen_width_m, distance=m.screen_distance_m)
+                photo, self._photo_index = self._load(self._photos, self._photo_index)
+                self._renderer = VirtualScreenRenderer(grid_world(), photo if photo is not None else _no_photos_card(),
+                                                       self.tables(), width=m.screen_width_m,
+                                                       distance=m.screen_distance_m)
             else:
-                pano = load_image(self._panoramas[self._pano_index]) if self._panoramas else grid_world()
-                self._renderer = PanoramaRenderer(pano, self.tables())
+                pano, self._pano_index = self._load(self._panoramas, self._pano_index)
+                self._renderer = PanoramaRenderer(pano if pano is not None else grid_world(), self.tables())
                 self._update_scene_sound()
         return self._renderer
 
@@ -282,21 +329,40 @@ class VrApp:
             return
         period = 1.0 / self.cfg.tracking.rate_hz
         samples = []
-        for _ in range(self.cfg.tracking.calibration_samples):
-            s = imu.read()
-            samples.append((s.gyro, s.accel))
-            time.sleep(period)
-        self.tracker.calibrate(samples)
-        while self.running:
-            t0 = self.clock()
+        failures = 0
+        while len(samples) < self.cfg.tracking.calibration_samples and self.running:
             try:
                 s = imu.read()
             except OSError as err:          # a loose I2C wire should not kill the headset
-                log.warning("IMU read failed: %s", err)
-                time.sleep(0.1)
+                failures += 1
+                if failures > 50:
+                    log.error("IMU not responding, head tracking off: %s", err)
+                    return
+                time.sleep(0.05)
                 continue
-            self.tracker.update(s.gyro, s.accel, t0)
-            time.sleep(max(0.0, period - (self.clock() - t0)))
+            samples.append((s.gyro, s.accel))
+            time.sleep(period)
+        self.tracker.calibrate(samples)
+        failures = 0
+        self.tracking_live = True
+        try:
+            while self.running:
+                t0 = self.clock()
+                try:
+                    s = imu.read()
+                except OSError as err:
+                    failures += 1
+                    if failures == 10:      # frozen orientation: don't let the helmet think it was put down
+                        self.tracking_live = False
+                        log.warning("IMU read failing: %s", err)
+                    time.sleep(0.1)
+                    continue
+                failures = 0
+                self.tracking_live = True
+                self.tracker.update(s.gyro, s.accel, t0)
+                time.sleep(max(0.0, period - (self.clock() - t0)))
+        finally:
+            self.tracking_live = False
 
     def run(self) -> None:
         threading.Thread(target=self.track_forever, name="imu", daemon=True).start()
@@ -307,7 +373,11 @@ class VrApp:
                 t0 = self.clock()
                 self.step()
                 hot = self.thermal.update()
-                fps = 2 if self.asleep else (30 if hot else self.cfg.display.fps)   # throttle when hot
+                fps = self.cfg.display.fps
+                if self.asleep:
+                    fps = 2
+                elif hot:
+                    fps = max(1, fps // 2)    # throttle when hot
                 frame = self.render()
                 if frame is not None:
                     self.hw.display.show(frame)

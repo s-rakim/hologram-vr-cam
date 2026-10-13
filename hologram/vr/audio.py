@@ -172,17 +172,61 @@ class Sink(Protocol):
     def close(self) -> None: ...
 
 
+class Pacer:
+    """Keeps a producer at most ``max_ahead_s`` ahead of real time.
+
+    A pipe into aplay holds up to ~1.4 s of audio on a Pi 5 (16 KiB pages), and
+    each block is decoded with the head orientation of the moment it was mixed,
+    so letting the mixer run ahead would make the sound lag behind your head.
+    """
+
+    def __init__(self, rate: int, max_ahead_s: float = 0.06, clock: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], None] = time.sleep) -> None:
+        self.rate = rate
+        self.max_ahead_s = max_ahead_s
+        self.clock = clock
+        self.sleep = sleep
+        self._t0: float | None = None
+        self._frames = 0
+
+    def ahead(self) -> float:
+        """Seconds of audio handed over beyond what has played (by the wall clock)."""
+        if self._t0 is None:
+            return 0.0
+        return self._frames / self.rate - (self.clock() - self._t0)
+
+    def wait(self, frames: int) -> None:
+        """Call before handing over ``frames`` more frames."""
+        now = self.clock()
+        if self._t0 is None or self.ahead() < -0.05:      # first block, or we fell behind: restart the clock
+            self._t0, self._frames = now, 0
+        excess = self.ahead() - self.max_ahead_s
+        if excess > 0:
+            self.sleep(excess)
+        self._frames += frames
+
+
 class AplaySink:
-    """Raw 16-bit stereo into ``aplay`` (the pipe paces the mixer in real time)."""
+    """Raw 16-bit stereo into ``aplay`` through a small pipe, paced to real time."""
+
+    BUFFER_US = 60000
 
     def __init__(self, device: str, rate: int) -> None:
         self.proc = subprocess.Popen(
             ["aplay", "-q", "-D", device, "-t", "raw", "-f", "S16_LE", "-c", "2", "-r", str(rate),
-             "--buffer-time=100000"],
-            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             f"--buffer-time={self.BUFFER_US}"],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, bufsize=0)
+        try:                                  # one page instead of 16: keeps the queue short
+            import fcntl
+
+            fcntl.fcntl(self.proc.stdin, getattr(fcntl, "F_SETPIPE_SZ", 1031), 4096)
+        except (ImportError, OSError):
+            pass
+        self.pacer = Pacer(rate, max_ahead_s=self.BUFFER_US / 1e6)
 
     def write(self, frames: np.ndarray) -> None:
         assert self.proc.stdin is not None
+        self.pacer.wait(len(frames))
         self.proc.stdin.write(np.ascontiguousarray(frames, "<i2").tobytes())
 
     def close(self) -> None:

@@ -58,7 +58,8 @@ class ReflectorOptics:
     focus: Vec3 = (16.0, 5.0, 75.0)           # ellipsoid focus F2, relative to the eye
     image_distance_m: float = 1.5             # where the picture appears to be (sets the display distance)
     display_mm: tuple[float, float] = (52.1, 52.1)    # active area (w, h) of one 2.9in 1440x1440 panel
-    display_roll_deg: float = 0.0             # panel turned about its own normal
+    left_roll_deg: float = 0.0                # calibration: that eye's panel turned in its tray
+    right_roll_deg: float = 0.0
     left_flip: tuple[bool, bool] = (False, False)     # (x, y): match how each panel's pixels run once mounted
     right_flip: tuple[bool, bool] = (False, False)
     nasal_clearance: float = 1.5              # each mirror stops this far from the centre line
@@ -106,7 +107,7 @@ class ReflectorOptics:
         if u[0] * side < 0:
             u = -u
         v = np.cross(axis, u) * side
-        r = math.radians(self.display_roll_deg)
+        r = math.radians(self.right_roll_deg if side > 0 else self.left_roll_deg)   # each in its own panel's frame
         u, v = u * math.cos(r) + v * math.sin(r), -u * math.sin(r) + v * math.cos(r)
         return centre, u, v
 
@@ -198,7 +199,7 @@ class LensOptics:
     cant_deg: float = 0.0            # each panel turned outward
 
     def ray_table(self, w: int, h: int, side: int = 1) -> RayTable:
-        g = eye_grid(w, h, self.k1, self.k2, center_x=side * self.lens_center_shift)
+        g = eye_grid(w, h, self.k1, self.k2, center_x=-side * self.lens_center_shift)   # + = towards the nose
         t = math.tan(math.radians(self.fov_deg) / 2)
         d = np.stack([g.sx * t, np.ones_like(g.sx), -g.sy * t], -1)
         c = math.radians(self.cant_deg) * side

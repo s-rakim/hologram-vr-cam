@@ -49,6 +49,7 @@ conversion to 5 V (~90 %) and the 3 % shutdown reserve, about **43 Wh** reaches 
 | 360 photos with sound (typical) | ~9-10 W | **about 4.3-4.8 hours** |
 | Passthrough most of the time | ~10.5-11.5 W | about 3.7-4.1 hours |
 | Put down (displays off, idle) | ~3.5 W | ~12 hours |
+| Powered off (Pi 5 set to switch off fully on halt) | ~0.01 W + the UPS board's own standby | weeks |
 
 **What keeps it above 4 h:**
 
@@ -59,6 +60,9 @@ conversion to 5 V (~90 %) and the 3 % shutdown reserve, about **43 Wh** reaches 
 - **Render scale:** the Pi renders 720 x 720 per eye and the GPU scales it up. `display.render_scale = 0.4` saves CPU
   power at some sharpness.
 - **Thermal throttle:** above 80 °C the frame rate halves, which also cuts power.
+- **Off means off:** by default a halted Pi 5 keeps drawing ~1.2-1.6 W, which would drain the pack in about a day
+  after a power-off. `deploy/setup_pi5.sh` sets `POWER_OFF_ON_HALT=1` (and `WAKE_ON_GPIO=0`) in the Pi 5's EEPROM,
+  as in Jeff Geerling's article below; the Pi's power button turns it back on.
 
 **More capacity:** a UPS board with 21700 cells (~4500-5000 mAh each) would give ~6 hours, but needs a deeper rear pod
 (edit `_pod_box` and the cell geometry in `cad/products/vr.py`).

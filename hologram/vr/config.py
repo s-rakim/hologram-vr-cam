@@ -48,7 +48,7 @@ class TrackingConfig:
     enabled: bool = True
     i2c_bus: int = 1
     address: int = 0x68
-    rate_hz: float = 500.0
+    rate_hz: float = 200.0                 # matches the MPU-6050's 200 Hz sample rate (hologram/imu.py)
     beta: float = 0.05
     calibration_samples: int = 400
     axis_map: tuple[str, str, str] = ("x", "y", "z")

@@ -73,6 +73,8 @@ Settings are saved in flash and survive power-off. An unknown command answers wi
 | `segment` | file path of the next segment (long recordings) |
 | `stopped` | why: `user`, `max_length`, `low_battery`, `too_hot`, `storage_full`, `error`, `shutdown` |
 | `refused` | why a capture was refused: `low_battery`, `too_hot`, `storage_full`, `privacy_led_fault`, `camera_error` |
+| `wifi_on` | Wi-Fi sync started; detail = SSID |
+| `wifi_off` | Wi-Fi sync stopped |
 | `battery_low` | battery at 10 % |
 | `battery_empty` | battery at 4 %: the recording is saved and the glasses power off |
 | `power_off` | going to sleep |
